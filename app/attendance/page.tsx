@@ -25,7 +25,7 @@ export default function AttendancePage() {
       setUser(session.user)
 
       const today = new Date().toISOString().split('T')[0]
-      const { data, error } = await supabase
+      const { data } = await supabase
         .from('attendance')
         .select('*')
         .eq('user_id', session.user.id)
@@ -66,7 +66,6 @@ export default function AttendancePage() {
       ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height)
       const dataUrl = canvas.toDataURL('image/jpeg', 0.6)
       setPhotoData(dataUrl)
-      // Stop camera feed after snapshot
       if (stream) {
         stream.getTracks().forEach((track) => track.stop())
         setStream(null)
@@ -88,6 +87,29 @@ export default function AttendancePage() {
     })
   }
 
+  // 5. Reverse geocode coordinates to readable address using OpenStreetMap
+  const fetchAddress = async (lat: number, lng: number): Promise<string> => {
+    try {
+      const res = await fetch(
+        `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18&addressdetails=1`
+      )
+      if (!res.ok) return 'Location captured'
+      const data = await res.json()
+      
+      const addr = data.address || {}
+      // Build a clean, readable short location (e.g., "Jl. Sunset Road, Kerobokan Kelod, Badung")
+      const parts = [
+        addr.road || addr.pedestrian || addr.building,
+        addr.village || addr.suburb || addr.neighbourhood,
+        addr.city || addr.town || addr.county || addr.state,
+      ].filter(Boolean)
+
+      return parts.length > 0 ? parts.join(', ') : data.display_name || 'Location captured'
+    } catch {
+      return 'Location captured'
+    }
+  }
+
   // Helper to convert base64 image into a Blob file
   const base64ToBlob = (base64: string) => {
     const arr = base64.split(',')
@@ -101,7 +123,7 @@ export default function AttendancePage() {
     return new Blob([u8arr], { type: mime })
   }
 
-  // 5. Submit Clock In / Out
+  // 6. Submit Clock In / Out
   const handleAttendance = async (type: 'clock_in' | 'clock_out') => {
     if (!photoData) {
       alert('Please take a selfie first.')
@@ -114,6 +136,9 @@ export default function AttendancePage() {
     try {
       const pos = await getCoordinates()
       const { latitude, longitude, accuracy } = pos.coords
+
+      setStatusMessage('Finding address...')
+      const address = await fetchAddress(latitude, longitude)
 
       setStatusMessage('Uploading selfie...')
       const blob = base64ToBlob(photoData)
@@ -145,6 +170,7 @@ export default function AttendancePage() {
             clock_in_lng: longitude,
             clock_in_accuracy: accuracy,
             clock_in_photo_url: publicUrl,
+            clock_in_address: address,
             status: 'incomplete',
           })
           .select()
@@ -162,6 +188,7 @@ export default function AttendancePage() {
             clock_out_lng: longitude,
             clock_out_accuracy: accuracy,
             clock_out_photo_url: publicUrl,
+            clock_out_address: address,
             status: 'present',
           })
           .eq('id', todayRecord.id)
@@ -259,12 +286,11 @@ export default function AttendancePage() {
           )}
         </div>
 
-        {/* Status text during submission */}
         {statusMessage && (
           <p className="text-center text-xs text-blue-600 animate-pulse">{statusMessage}</p>
         )}
 
-        {/* Action Buttons: Clock In & Clock Out */}
+        {/* Action Buttons */}
         <div className="pt-2">
           {!todayRecord?.clock_in_at ? (
             <button

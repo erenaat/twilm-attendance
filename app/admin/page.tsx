@@ -12,11 +12,13 @@ interface AttendanceRecord {
   clock_in_lng: number | null
   clock_in_accuracy: number | null
   clock_in_photo_url: string | null
+  clock_in_address: string | null
   clock_out_at: string | null
   clock_out_lat: number | null
   clock_out_lng: number | null
   clock_out_accuracy: number | null
   clock_out_photo_url: string | null
+  clock_out_address: string | null
   status: string
   profiles: {
     full_name: string
@@ -41,11 +43,13 @@ export default function AdminPage() {
         clock_in_lng,
         clock_in_accuracy,
         clock_in_photo_url,
+        clock_in_address,
         clock_out_at,
         clock_out_lat,
         clock_out_lng,
         clock_out_accuracy,
         clock_out_photo_url,
+        clock_out_address,
         status,
         profiles (
           full_name,
@@ -159,8 +163,8 @@ export default function AdminPage() {
                         {rec.profiles?.full_name || 'Unknown'}
                         <div className="text-[10px] text-gray-400 font-normal">{rec.profiles?.email}</div>
                       </td>
-                      <td className="p-3">{rec.work_date}</td>
-                      <td className="p-3">{formatTime(rec.clock_in_at)}</td>
+                      <td className="p-3 whitespace-nowrap">{rec.work_date}</td>
+                      <td className="p-3 whitespace-nowrap">{formatTime(rec.clock_in_at)}</td>
                       <td className="p-3">
                         {rec.clock_in_photo_url ? (
                           <a href={rec.clock_in_photo_url} target="_blank" rel="noreferrer">
@@ -172,17 +176,26 @@ export default function AdminPage() {
                           </a>
                         ) : '-'}
                       </td>
-                      <td className="p-3">
-                        {rec.clock_in_lat && rec.clock_in_lng ? (
+                      <td className="p-3 min-w-[160px]">
+                        {rec.clock_in_address ? (
                           <div>
-                            <span className="font-mono text-[10px]">
-                              {rec.clock_in_lat.toFixed(4)}, {rec.clock_in_lng.toFixed(4)}
-                            </span>
-                            <div className="text-[10px] text-gray-400">±{rec.clock_in_accuracy?.toFixed(0)}m</div>
+                            <div className="font-medium text-gray-800">{rec.clock_in_address}</div>
+                            {rec.clock_in_lat && rec.clock_in_lng && (
+                              <a
+                                href={`https://www.google.com/maps?q=${rec.clock_in_lat},${rec.clock_in_lng}`}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="text-[10px] text-blue-500 hover:underline"
+                              >
+                                View Map (±{rec.clock_in_accuracy?.toFixed(0)}m)
+                              </a>
+                            )}
                           </div>
+                        ) : rec.clock_in_lat ? (
+                          <span className="font-mono text-[10px]">{rec.clock_in_lat.toFixed(4)}, {rec.clock_in_lng?.toFixed(4)}</span>
                         ) : '-'}
                       </td>
-                      <td className="p-3">{formatTime(rec.clock_out_at)}</td>
+                      <td className="p-3 whitespace-nowrap">{formatTime(rec.clock_out_at)}</td>
                       <td className="p-3">
                         {rec.clock_out_photo_url ? (
                           <a href={rec.clock_out_photo_url} target="_blank" rel="noreferrer">
@@ -194,14 +207,23 @@ export default function AdminPage() {
                           </a>
                         ) : '-'}
                       </td>
-                      <td className="p-3">
-                        {rec.clock_out_lat && rec.clock_out_lng ? (
+                      <td className="p-3 min-w-[160px]">
+                        {rec.clock_out_address ? (
                           <div>
-                            <span className="font-mono text-[10px]">
-                              {rec.clock_out_lat.toFixed(4)}, {rec.clock_out_lng.toFixed(4)}
-                            </span>
-                            <div className="text-[10px] text-gray-400">±{rec.clock_out_accuracy?.toFixed(0)}m</div>
+                            <div className="font-medium text-gray-800">{rec.clock_out_address}</div>
+                            {rec.clock_out_lat && rec.clock_out_lng && (
+                              <a
+                                href={`https://www.google.com/maps?q=${rec.clock_out_lat},${rec.clock_out_lng}`}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="text-[10px] text-blue-500 hover:underline"
+                              >
+                                View Map (±{rec.clock_out_accuracy?.toFixed(0)}m)
+                              </a>
+                            )}
                           </div>
+                        ) : rec.clock_out_lat ? (
+                          <span className="font-mono text-[10px]">{rec.clock_out_lat.toFixed(4)}, {rec.clock_out_lng?.toFixed(4)}</span>
                         ) : '-'}
                       </td>
                       <td className="p-3">
