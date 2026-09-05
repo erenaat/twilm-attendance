@@ -30,7 +30,6 @@ export default function TasksPage() {
   const [loading, setLoading] = useState(true)
   const [activeTab, setActiveTab] = useState<'pending' | 'completed'>('pending')
 
-  // Admin Controls
   const [selectedStoreFilter, setSelectedStoreFilter] = useState<string>('all')
   const [showAddForm, setShowAddForm] = useState(false)
   const [newTitle, setNewTitle] = useState('')
@@ -39,71 +38,73 @@ export default function TasksPage() {
   const [newStoreId, setNewStoreId] = useState('')
   const [submitting, setSubmitting] = useState(false)
 
-  const loadTasks = async () => {
-    setLoading(true)
-    const {
-      data: { session },
-    } = await supabase.auth.getSession()
+  useEffect(() => {
+    let isMounted = true
 
-    if (!session) {
-      router.push('/login')
-      return
-    }
+    const loadData = async () => {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession()
 
-    const { data: prof } = await supabase
-      .from('profiles')
-      .select('role, store_id')
-      .eq('id', session.user.id)
-      .maybeSingle()
-
-    const isAdmin = prof?.role === 'admin'
-    if (prof) {
-      setUserRole(prof.role)
-      if (prof.store_id && isAdmin) {
-        setSelectedStoreFilter(prof.store_id)
+      if (!session) {
+        router.push('/login')
+        return
       }
-    }
 
-    // Load Stores for Admin
-    if (isAdmin) {
-      const { data: storeData } = await supabase
-        .from('stores')
-        .select('id, name')
-        .order('name')
-      if (storeData) {
-        setStores(storeData)
-        if (!newStoreId && storeData.length > 0) {
-          setNewStoreId(prof?.store_id || storeData[0].id)
+      const { data: prof } = await supabase
+        .from('profiles')
+        .select('role, store_id')
+        .eq('id', session.user.id)
+        .maybeSingle()
+
+      const isAdmin = prof?.role === 'admin'
+      if (prof && isMounted) {
+        setUserRole(prof.role)
+        if (prof.store_id && isAdmin) {
+          setSelectedStoreFilter(prof.store_id)
         }
       }
+
+      if (isAdmin) {
+        const { data: storeData } = await supabase
+          .from('stores')
+          .select('id, name')
+          .order('name')
+        if (storeData && isMounted) {
+          setStores(storeData)
+          if (storeData.length > 0) {
+            setNewStoreId(prof?.store_id || storeData[0].id)
+          }
+        }
+      }
+
+      let query = supabase
+        .from('tasks')
+        .select('*, stores(id, name)')
+        .order('created_at', { ascending: false })
+
+      if (!isAdmin) {
+        query = query.or(`assigned_to.eq.${session.user.id},assigned_to.is.null`)
+      }
+
+      const { data, error } = await query
+
+      if (error) {
+        console.error('Error fetching tasks:', error)
+      } else if (data && isMounted) {
+        setTasks(data as unknown as TaskItem[])
+      }
+
+      if (isMounted) setLoading(false)
     }
 
-    // Query Tasks
-    let query = supabase
-      .from('tasks')
-      .select('*, stores(id, name)')
-      .order('created_at', { ascending: false })
+    loadData()
 
-    if (!isAdmin) {
-      query = query.or(`assigned_to.eq.${session.user.id},assigned_to.is.null`)
+    return () => {
+      isMounted = false
     }
-
-    const { data, error } = await query
-
-    if (error) {
-      console.error('Error fetching tasks:', error)
-    } else if (data) {
-      setTasks(data as unknown as TaskItem[])
-    }
-
-    setLoading(false)
-  }
-
-  useEffect(() => {
-    loadTasks()
   }, [router])
 
-  // Toggle status for both Staff and Admin
   const toggleTaskStatus = async (task: TaskItem) => {
     const nextStatus = task.status === 'pending' ? 'completed' : 'pending'
     const completedAt = nextStatus === 'completed' ? new Date().toISOString() : null
@@ -131,7 +132,6 @@ export default function TasksPage() {
     }
   }
 
-  // Admin: Create new task
   const handleCreateTask = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!newTitle) return
@@ -164,7 +164,6 @@ export default function TasksPage() {
     }
   }
 
-  // Admin: Delete task
   const handleDeleteTask = async (e: React.MouseEvent, id: string) => {
     e.stopPropagation()
     if (!confirm('Hapus tugas ini?')) return
@@ -177,7 +176,6 @@ export default function TasksPage() {
     }
   }
 
-  // Filter tasks by store
   const storeFilteredTasks = useMemo(() => {
     if (userRole !== 'admin' || selectedStoreFilter === 'all') {
       return tasks
@@ -198,7 +196,6 @@ export default function TasksPage() {
       <StaffNav userRole={userRole} />
 
       <div className="max-w-4xl mx-auto px-4 pt-8 space-y-6">
-        {/* Header Strip */}
         <div className="border-b border-[#eaeae5] pb-4 flex flex-col sm:flex-row sm:items-end justify-between gap-4">
           <div>
             <span className="text-[10px] tracking-[0.25em] uppercase text-[#73726c] font-mono">
@@ -237,7 +234,6 @@ export default function TasksPage() {
               </>
             )}
 
-            {/* Tab Selector */}
             <div className="flex border border-[#eaeae5] bg-white p-0.5 text-xs">
               <button
                 onClick={() => setActiveTab('pending')}
@@ -263,7 +259,6 @@ export default function TasksPage() {
           </div>
         </div>
 
-        {/* Admin Create Task Form */}
         {userRole === 'admin' && showAddForm && (
           <form
             onSubmit={handleCreateTask}
@@ -351,7 +346,6 @@ export default function TasksPage() {
           </form>
         )}
 
-        {/* Progress Bar */}
         <div className="bg-white border border-[#eaeae5] p-5 space-y-3">
           <div className="flex justify-between items-baseline text-xs">
             <span className="text-[10px] tracking-widest uppercase text-[#73726c]">
@@ -370,7 +364,6 @@ export default function TasksPage() {
           </div>
         </div>
 
-        {/* Tasks List */}
         <div className="bg-white border border-[#eaeae5] divide-y divide-[#eaeae5]">
           {loading ? (
             <p className="p-8 text-center text-xs text-[#73726c] animate-pulse">

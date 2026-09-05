@@ -28,15 +28,13 @@ export default function DashboardPage() {
   const [profile, setProfile] = useState<ProfileData | null>(null)
   const [todayRecord, setTodayRecord] = useState<AttendanceRecord | null>(null)
   const [pendingTaskCount, setPendingTaskCount] = useState<number>(0)
-  const [loading, setLoading] = useState(true)
   const [currentTime, setCurrentTime] = useState<string>('')
   const [currentDate, setCurrentDate] = useState<string>('')
   const [greetingTime, setGreetingTime] = useState<string>('DAY')
 
   useEffect(() => {
-    const updateTime = () => {
+    const updateClock = () => {
       const now = new Date()
-      // Bali timezone (WITA / UTC+8)
       const timeStr = new Intl.DateTimeFormat('en-GB', {
         timeZone: 'Asia/Makassar',
         hour: '2-digit',
@@ -62,12 +60,14 @@ export default function DashboardPage() {
       else setGreetingTime('EVENING')
     }
 
-    updateTime()
-    const timer = setInterval(updateTime, 1000)
+    updateClock()
+    const timer = setInterval(updateClock, 1000)
     return () => clearInterval(timer)
   }, [])
 
   useEffect(() => {
+    let isMounted = true
+
     const fetchDashboardData = async () => {
       const {
         data: { session },
@@ -78,18 +78,16 @@ export default function DashboardPage() {
         return
       }
 
-      // Fetch profile
       const { data: profData } = await supabase
         .from('profiles')
         .select('full_name, role, store_id, stores(name)')
         .eq('id', session.user.id)
         .maybeSingle()
 
-      if (profData) {
+      if (profData && isMounted) {
         setProfile(profData as unknown as ProfileData)
       }
 
-      // Fetch today's attendance record
       const today = new Date().toISOString().split('T')[0]
       const { data: attData } = await supabase
         .from('attendance')
@@ -98,23 +96,42 @@ export default function DashboardPage() {
         .eq('work_date', today)
         .maybeSingle()
 
-      if (attData) {
+      if (attData && isMounted) {
         setTodayRecord(attData)
       }
 
-      // Fetch pending tasks count
       const { count: taskCount } = await supabase
         .from('tasks')
         .select('*', { count: 'exact', head: true })
         .or(`assigned_to.eq.${session.user.id},assigned_to.is.null`)
         .eq('status', 'pending')
 
-      setPendingTaskCount(taskCount ?? 0)
-      setLoading(false)
+      if (isMounted) {
+        setPendingTaskCount(taskCount ?? 0)
+      }
     }
 
     fetchDashboardData()
+
+    return () => {
+      isMounted = false
+    }
   }, [router])
+
+  // Pure derived state — no effect or setState required
+  const shiftDuration = (() => {
+    if (!todayRecord?.clock_in_at) return '0h 0m'
+    const start = new Date(todayRecord.clock_in_at).getTime()
+    const end = todayRecord.clock_out_at
+      ? new Date(todayRecord.clock_out_at).getTime()
+      : currentTime
+      ? new Date().getTime()
+      : start
+    const diffMins = Math.max(0, Math.floor((end - start) / (1000 * 60)))
+    const hrs = Math.floor(diffMins / 60)
+    const mins = diffMins % 60
+    return `${hrs}h ${mins}m`
+  })()
 
   const formatClock = (timestamp: string | null) => {
     if (!timestamp) return '--:--'
@@ -124,18 +141,6 @@ export default function DashboardPage() {
     })
   }
 
-  const getShiftDuration = () => {
-    if (!todayRecord?.clock_in_at) return '0h 0m'
-    const start = new Date(todayRecord.clock_in_at).getTime()
-    const end = todayRecord.clock_out_at
-      ? new Date(todayRecord.clock_out_at).getTime()
-      : Date.now()
-    const diffMins = Math.max(0, Math.floor((end - start) / (1000 * 60)))
-    const hrs = Math.floor(diffMins / 60)
-    const mins = diffMins % 60
-    return `${hrs}h ${mins}m`
-  }
-
   const displayName = profile?.full_name?.split(' ')[0] || 'TEAM'
 
   return (
@@ -143,7 +148,6 @@ export default function DashboardPage() {
       <StaffNav userRole={profile?.role} />
 
       <div className="max-w-4xl mx-auto px-4 pt-6 md:pt-8 space-y-6">
-        {/* Editorial Greeting Header */}
         <div className="border-b border-[#eaeae5] pb-5">
           <span className="text-[10px] tracking-[0.25em] uppercase text-[#73726c] font-mono">
             STAFF OS / PERSONAL
@@ -164,7 +168,6 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        {/* Current Shift Status Card */}
         <div className="bg-white border border-[#eaeae5] p-5 sm:p-6 space-y-5">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-[#eaeae5] pb-4">
             <div>
@@ -206,7 +209,6 @@ export default function DashboardPage() {
             </Link>
           </div>
 
-          {/* Time metrics grid */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 pt-1">
             <div>
               <span className="text-[10px] tracking-wider uppercase text-[#73726c] block">
@@ -231,7 +233,7 @@ export default function DashboardPage() {
                 WORKING DURATION
               </span>
               <span className="text-sm sm:text-base font-mono font-light mt-1 block">
-                {getShiftDuration()}
+                {shiftDuration}
               </span>
             </div>
 
@@ -246,7 +248,6 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        {/* Operational Grid Cards */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <Link
             href="/attendance"

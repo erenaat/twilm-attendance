@@ -47,11 +47,9 @@ export default function LeavePage() {
   const [stores, setStores] = useState<Store[]>([])
   const [loading, setLoading] = useState(true)
 
-  // Admin View State
   const [activeTab, setActiveTab] = useState<'personal' | 'approvals'>('personal')
   const [selectedStoreFilter, setSelectedStoreFilter] = useState<string>('all')
 
-  // Form State
   const [leaveType, setLeaveType] = useState<string>('annual')
   const [startDate, setStartDate] = useState<string>('')
   const [endDate, setEndDate] = useState<string>('')
@@ -59,85 +57,88 @@ export default function LeavePage() {
   const [submitting, setSubmitting] = useState(false)
   const [message, setMessage] = useState<string>('')
 
-  const loadLeaveData = async () => {
-    setLoading(true)
-    const {
-      data: { session },
-    } = await supabase.auth.getSession()
+  useEffect(() => {
+    let isMounted = true
 
-    if (!session) {
-      router.push('/login')
-      return
-    }
+    const loadData = async () => {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession()
 
-    setUser(session.user)
-
-    const { data: prof } = await supabase
-      .from('profiles')
-      .select('role, store_id')
-      .eq('id', session.user.id)
-      .maybeSingle()
-
-    const isAdmin = prof?.role === 'admin'
-    if (prof) {
-      setUserRole(prof.role)
-      if (prof.store_id && isAdmin) {
-        setSelectedStoreFilter(prof.store_id)
+      if (!session) {
+        router.push('/login')
+        return
       }
-    }
 
-    // 1. Fetch Balances
-    const currentYear = new Date().getFullYear()
-    const { data: balData } = await supabase
-      .from('leave_balances')
-      .select('*')
-      .eq('user_id', session.user.id)
-      .eq('year', currentYear)
-      .maybeSingle()
+      if (isMounted) setUser(session.user)
 
-    if (balData) {
-      setBalance(balData)
-    } else {
-      setBalance({ annual_leave_total: 12, annual_leave_used: 0, sick_leave_used: 0 })
-    }
+      const { data: prof } = await supabase
+        .from('profiles')
+        .select('role, store_id')
+        .eq('id', session.user.id)
+        .maybeSingle()
 
-    // 2. Fetch Personal Requests
-    const { data: reqData } = await supabase
-      .from('leave_requests')
-      .select('*')
-      .eq('user_id', session.user.id)
-      .order('created_at', { ascending: false })
+      const isAdmin = prof?.role === 'admin'
+      if (prof && isMounted) {
+        setUserRole(prof.role)
+        if (prof.store_id && isAdmin) {
+          setSelectedStoreFilter(prof.store_id)
+        }
+      }
 
-    if (reqData) {
-      setPersonalRequests(reqData)
-    }
+      const currentYear = new Date().getFullYear()
+      const { data: balData } = await supabase
+        .from('leave_balances')
+        .select('*')
+        .eq('user_id', session.user.id)
+        .eq('year', currentYear)
+        .maybeSingle()
 
-    // 3. If Admin: Load All Staff Requests & Stores
-    if (isAdmin) {
-      const { data: storeData } = await supabase
-        .from('stores')
-        .select('id, name')
-        .order('name')
-      if (storeData) setStores(storeData)
+      if (isMounted) {
+        if (balData) {
+          setBalance(balData)
+        } else {
+          setBalance({ annual_leave_total: 12, annual_leave_used: 0, sick_leave_used: 0 })
+        }
+      }
 
-      const { data: adminReqData } = await supabase
+      const { data: reqData } = await supabase
         .from('leave_requests')
-        .select('*, profiles(id, full_name, email, store_id, stores(id, name))')
+        .select('*')
+        .eq('user_id', session.user.id)
         .order('created_at', { ascending: false })
 
-      if (adminReqData) {
-        setAllStaffRequests(adminReqData as unknown as LeaveRequestItem[])
+      if (reqData && isMounted) {
+        setPersonalRequests(reqData)
       }
+
+      if (isAdmin) {
+        const { data: storeData } = await supabase
+          .from('stores')
+          .select('id, name')
+          .order('name')
+        if (storeData && isMounted) setStores(storeData)
+
+        const { data: adminReqData } = await supabase
+          .from('leave_requests')
+          .select('*, profiles(id, full_name, email, store_id, stores(id, name))')
+          .order('created_at', { ascending: false })
+
+        if (adminReqData && isMounted) {
+          setAllStaffRequests(adminReqData as unknown as LeaveRequestItem[])
+        }
+      }
+
+      if (isMounted) setLoading(false)
     }
 
-    setLoading(false)
-  }
+    loadData()
 
-  useEffect(() => {
-    loadLeaveData()
+    return () => {
+      isMounted = false
+    }
   }, [router])
 
-  // Submit Application
   const handleSubmitRequest = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!user) return
@@ -185,7 +186,6 @@ export default function LeavePage() {
     }
   }
 
-  // Admin: Approve or Reject
   const handleDecision = async (id: string, decision: 'approved' | 'rejected') => {
     const { error } = await supabase
       .from('leave_requests')
@@ -209,7 +209,6 @@ export default function LeavePage() {
 
   const remainingAnnual = (balance?.annual_leave_total || 12) - (balance?.annual_leave_used || 0)
 
-  // Filter requests by Store for Admin Review
   const filteredApprovals = useMemo(() => {
     if (selectedStoreFilter === 'all') return allStaffRequests
     return allStaffRequests.filter((r) => r.profiles?.store_id === selectedStoreFilter)
@@ -222,7 +221,6 @@ export default function LeavePage() {
       <StaffNav userRole={userRole} />
 
       <div className="max-w-4xl mx-auto px-4 pt-8 space-y-6">
-        {/* Header Strip */}
         <div className="border-b border-[#eaeae5] pb-4 flex flex-col sm:flex-row sm:items-end justify-between gap-4">
           <div>
             <span className="text-[10px] tracking-[0.25em] uppercase text-[#73726c] font-mono">
@@ -264,7 +262,6 @@ export default function LeavePage() {
           )}
         </div>
 
-        {/* Balance Overview Cards */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <div className="bg-white border border-[#eaeae5] p-5">
             <span className="text-[10px] tracking-widest uppercase text-[#73726c] block">
@@ -312,7 +309,6 @@ export default function LeavePage() {
           </div>
         </div>
 
-        {/* TAB 1: PERSONAL APPLICATIONS & SUBMISSION */}
         {activeTab === 'personal' && (
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6 items-start">
             <div className="bg-white border border-[#eaeae5] p-6 space-y-4">
@@ -453,10 +449,8 @@ export default function LeavePage() {
           </div>
         )}
 
-        {/* TAB 2: ADMIN APPROVALS QUEUE */}
         {userRole === 'admin' && activeTab === 'approvals' && (
           <div className="bg-white border border-[#eaeae5] space-y-4">
-            {/* Store Filter Toolbar */}
             <div className="p-4 border-b border-[#eaeae5] bg-[#fbfbf9]/60 flex flex-wrap items-center justify-between gap-3">
               <div className="flex items-center space-x-2">
                 <span className="text-[10px] uppercase tracking-wider text-[#73726c]">

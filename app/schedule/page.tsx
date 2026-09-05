@@ -37,10 +37,8 @@ export default function SchedulePage() {
   const [stores, setStores] = useState<Store[]>([])
   const [staffList, setStaffList] = useState<ProfileOption[]>([])
   const [userRole, setUserRole] = useState<string | undefined>(undefined)
-  const [currentUserId, setCurrentUserId] = useState<string>('')
   const [loading, setLoading] = useState(true)
 
-  // Filter & Form Controls for Admin
   const [selectedStoreFilter, setSelectedStoreFilter] = useState<string>('all')
   const [showAddForm, setShowAddForm] = useState(false)
   const [formUserId, setFormUserId] = useState('')
@@ -52,90 +50,88 @@ export default function SchedulePage() {
   const [formNotes, setFormNotes] = useState('')
   const [submitting, setSubmitting] = useState(false)
 
-  const loadScheduleData = async () => {
-    setLoading(true)
-
-    const {
-      data: { session },
-    } = await supabase.auth.getSession()
-
-    if (!session) {
-      router.push('/login')
-      return
-    }
-
-    setCurrentUserId(session.user.id)
-
-    // Check Role
-    const { data: prof } = await supabase
-      .from('profiles')
-      .select('role, store_id')
-      .eq('id', session.user.id)
-      .maybeSingle()
-
-    const isAdmin = prof?.role === 'admin'
-    if (prof) {
-      setUserRole(prof.role)
-      if (prof.store_id && isAdmin) {
-        setSelectedStoreFilter(prof.store_id)
-      }
-    }
-
-    // Load Stores & Staff List if Admin
-    if (isAdmin) {
-      const { data: storeData } = await supabase
-        .from('stores')
-        .select('id, name, code')
-        .order('name')
-      if (storeData) {
-        setStores(storeData)
-        if (storeData.length > 0 && !formStoreId) {
-          setFormStoreId(prof?.store_id || storeData[0].id)
-        }
-      }
-
-      const { data: profilesData } = await supabase
-        .from('profiles')
-        .select('id, full_name, email, store_id')
-        .order('full_name')
-      if (profilesData) {
-        setStaffList(profilesData)
-        if (profilesData.length > 0 && !formUserId) {
-          setFormUserId(profilesData[0].id)
-        }
-      }
-    }
-
-    // Query Schedules
-    const today = new Date().toISOString().split('T')[0]
-    let query = supabase
-      .from('schedules')
-      .select('*, stores(id, name, code), profiles(id, full_name, email, store_id)')
-      .gte('shift_date', today)
-      .order('shift_date', { ascending: true })
-
-    if (!isAdmin) {
-      query = query.eq('user_id', session.user.id).limit(14)
-    } else {
-      query = query.limit(100)
-    }
-
-    const { data, error } = await query
-
-    if (error) {
-      console.error('Error fetching schedules:', error)
-    } else if (data) {
-      setSchedules(data as unknown as ScheduleItem[])
-    }
-
-    setLoading(false)
-  }
-
   useEffect(() => {
-    loadScheduleData()
+    let isMounted = true
+
+    const loadData = async () => {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession()
+
+      if (!session) {
+        router.push('/login')
+        return
+      }
+
+      const { data: prof } = await supabase
+        .from('profiles')
+        .select('role, store_id')
+        .eq('id', session.user.id)
+        .maybeSingle()
+
+      const isAdmin = prof?.role === 'admin'
+      if (prof && isMounted) {
+        setUserRole(prof.role)
+        if (prof.store_id && isAdmin) {
+          setSelectedStoreFilter(prof.store_id)
+        }
+      }
+
+      if (isAdmin) {
+        const { data: storeData } = await supabase
+          .from('stores')
+          .select('id, name, code')
+          .order('name')
+        if (storeData && isMounted) {
+          setStores(storeData)
+          if (storeData.length > 0) {
+            setFormStoreId(prof?.store_id || storeData[0].id)
+          }
+        }
+
+        const { data: profilesData } = await supabase
+          .from('profiles')
+          .select('id, full_name, email, store_id')
+          .order('full_name')
+        if (profilesData && isMounted) {
+          setStaffList(profilesData)
+          if (profilesData.length > 0) {
+            setFormUserId(profilesData[0].id)
+          }
+        }
+      }
+
+      const today = new Date().toISOString().split('T')[0]
+      let query = supabase
+        .from('schedules')
+        .select('*, stores(id, name, code), profiles(id, full_name, email, store_id)')
+        .gte('shift_date', today)
+        .order('shift_date', { ascending: true })
+
+      if (!isAdmin) {
+        query = query.eq('user_id', session.user.id).limit(14)
+      } else {
+        query = query.limit(100)
+      }
+
+      const { data, error } = await query
+
+      if (error) {
+        console.error('Error fetching schedules:', error)
+      } else if (data && isMounted) {
+        setSchedules(data as unknown as ScheduleItem[])
+      }
+
+      if (isMounted) setLoading(false)
+    }
+
+    loadData()
+
+    return () => {
+      isMounted = false
+    }
   }, [router])
 
-  // Admin: Save or Update Shift
   const handleSaveShift = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!formUserId || !formDate) {
@@ -144,7 +140,6 @@ export default function SchedulePage() {
     }
 
     setSubmitting(true)
-
     const targetStore = formStoreId || (stores[0]?.id ?? null)
 
     const { data, error } = await supabase
@@ -179,7 +174,6 @@ export default function SchedulePage() {
     }
   }
 
-  // Admin: Delete Shift
   const handleDeleteShift = async (id: string) => {
     if (!confirm('Hapus jadwal shift ini?')) return
 
@@ -212,7 +206,6 @@ export default function SchedulePage() {
       <StaffNav userRole={userRole} />
 
       <div className="max-w-4xl mx-auto px-4 pt-8 space-y-6">
-        {/* Header Strip */}
         <div className="border-b border-[#eaeae5] pb-4 flex flex-col sm:flex-row sm:items-end justify-between gap-4">
           <div>
             <span className="text-[10px] tracking-[0.25em] uppercase text-[#73726c] font-mono">
@@ -225,7 +218,6 @@ export default function SchedulePage() {
 
           {userRole === 'admin' && (
             <div className="flex flex-wrap items-center gap-2">
-              {/* Store Switcher */}
               <div className="flex items-center space-x-1.5 bg-white border border-[#eaeae5] px-2.5 py-1.5 text-xs">
                 <span className="text-[10px] uppercase text-[#73726c]">Store:</span>
                 <select
@@ -252,7 +244,6 @@ export default function SchedulePage() {
           )}
         </div>
 
-        {/* Admin Shift Editor Form */}
         {userRole === 'admin' && showAddForm && (
           <form
             onSubmit={handleSaveShift}
@@ -376,7 +367,6 @@ export default function SchedulePage() {
           </form>
         )}
 
-        {/* Shift Listing */}
         {loading ? (
           <p className="text-xs uppercase tracking-widest text-[#73726c] animate-pulse py-8 text-center">
             Loading Shift Schedule...
