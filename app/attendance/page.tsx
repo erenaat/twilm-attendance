@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import Image from 'next/image'
 import { supabase } from '../lib/supabase'
@@ -9,9 +9,6 @@ import StaffNav from '../components/StaffNav'
 interface Store {
   id: string
   name: string
-  lat: number
-  lng: number
-  radius_meters: number
 }
 
 interface ProfileData {
@@ -29,10 +26,12 @@ interface AttendanceToday {
   clock_in_at: string | null
   clock_in_lat: number | null
   clock_in_lng: number | null
+  clock_in_address: string | null
   clock_in_photo_url: string | null
   clock_out_at: string | null
   clock_out_lat: number | null
   clock_out_lng: number | null
+  clock_out_address: string | null
   clock_out_photo_url: string | null
   status: string
   punctuality_status?: string | null
@@ -56,8 +55,8 @@ export default function AttendancePage() {
   const [cameraActive, setCameraActive] = useState(false)
   const [capturedPhoto, setCapturedPhoto] = useState<string | null>(null)
   const [currentCoords, setCurrentCoords] = useState<{ lat: number; lng: number; accuracy: number } | null>(null)
-  const [distanceMeters, setDistanceMeters] = useState<number | null>(null)
-  const [isWithinRadius, setIsWithinRadius] = useState<boolean>(true)
+  const [detectedAddress, setDetectedAddress] = useState<string>('')
+  const [detectingLocation, setDetectingLocation] = useState<boolean>(false)
 
   // Handover Modal State
   const [showHandoverModal, setShowHandoverModal] = useState(false)
@@ -68,56 +67,30 @@ export default function AttendancePage() {
   const [submitting, setSubmitting] = useState(false)
   const [statusMessage, setStatusMessage] = useState<string>('')
 
-  // Calculate distance between two coordinates in meters
-  const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number) => {
-    const R = 6371e3
-    const φ1 = (lat1 * Math.PI) / 180
-    const φ2 = (lat2 * Math.PI) / 180
-    const Δφ = ((lat2 - lat1) * Math.PI) / 180
-    const Δλ = ((lon2 - lon1) * Math.PI) / 180
-
-    const a =
-      Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
-      Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) * Math.sin(Δλ / 2)
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
-    return Math.round(R * c)
-  }
-
-  // Geolocation watch
-  const requestLocation = useCallback((targetStore?: Store | null) => {
-    if (!navigator.geolocation) {
-      setStatusMessage('Geolocation is not supported by your device.')
-      return
+  // Convert Coordinates to Human Readable Address (OpenStreetMap Nominatim)
+  const fetchAddressFromCoords = async (lat: number, lng: number): Promise<string> => {
+    try {
+      const response = await fetch(
+        `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18&addressdetails=1`,
+        {
+          headers: {
+            'Accept-Language': 'en,id',
+            'User-Agent': 'TWILM-Staff-OS',
+          },
+        }
+      )
+      if (!response.ok) return `${lat.toFixed(6)}, ${lng.toFixed(6)}`
+      const data = await response.json()
+      return data?.display_name || `${lat.toFixed(6)}, ${lng.toFixed(6)}`
+    } catch {
+      return `${lat.toFixed(6)}, ${lng.toFixed(6)}`
     }
-
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        const coords = {
-          lat: pos.coords.latitude,
-          lng: pos.coords.longitude,
-          accuracy: Math.round(pos.coords.accuracy),
-        }
-        setCurrentCoords(coords)
-
-        const storeToCheck = targetStore || assignedStore
-        if (storeToCheck && storeToCheck.lat && storeToCheck.lng) {
-          const dist = calculateDistance(coords.lat, coords.lng, storeToCheck.lat, storeToCheck.lng)
-          setDistanceMeters(dist)
-          setIsWithinRadius(dist <= (storeToCheck.radius_meters || 150))
-        }
-      },
-      (err) => {
-        console.warn('Geolocation warning:', err.message)
-        setStatusMessage('Please enable location access to verify store presence.')
-      },
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
-    )
-  }, [assignedStore])
+  }
 
   useEffect(() => {
     let isMounted = true
 
-    const loadInitialData = async () => {
+    const initializeAttendance = async () => {
       const {
         data: { session },
       } = await supabase.auth.getSession()
@@ -127,10 +100,10 @@ export default function AttendancePage() {
         return
       }
 
-      // Fetch profile with assigned store
+      // Fetch profile
       const { data: profData } = await supabase
         .from('profiles')
-        .select('id, full_name, email, role, store_id, stores(id, name, lat, lng, radius_meters)')
+        .select('id, full_name, email, role, store_id, stores(id, name)')
         .eq('id', session.user.id)
         .maybeSingle()
 
@@ -138,11 +111,10 @@ export default function AttendancePage() {
         setProfile(profData as unknown as ProfileData)
         if (profData.stores) {
           setAssignedStore(profData.stores as unknown as Store)
-          requestLocation(profData.stores as unknown as Store)
         }
       }
 
-      // Fetch today's schedule start/end if exists
+      // Fetch today's schedule
       const today = new Date().toISOString().split('T')[0]
       const { data: schData } = await supabase
         .from('schedules')
@@ -169,14 +141,46 @@ export default function AttendancePage() {
       }
 
       if (isMounted) setLoading(false)
+
+      // Geolocation resolution
+      if (typeof window !== 'undefined' && 'geolocation' in navigator) {
+        if (isMounted) setDetectingLocation(true)
+        navigator.geolocation.getCurrentPosition(
+          async (pos) => {
+            if (!isMounted) return
+            const coords = {
+              lat: pos.coords.latitude,
+              lng: pos.coords.longitude,
+              accuracy: Math.round(pos.coords.accuracy),
+            }
+            setCurrentCoords(coords)
+
+            const address = await fetchAddressFromCoords(coords.lat, coords.lng)
+            if (isMounted) {
+              setDetectedAddress(address)
+              setDetectingLocation(false)
+            }
+          },
+          (err) => {
+            console.warn('Geolocation notice:', err.message)
+            if (isMounted) {
+              setDetectedAddress('Location permission not granted')
+              setDetectingLocation(false)
+            }
+          },
+          { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+        )
+      } else if (isMounted) {
+        setDetectedAddress('Location not supported by device')
+      }
     }
 
-    loadInitialData()
+    initializeAttendance()
 
     return () => {
       isMounted = false
     }
-  }, [router, requestLocation])
+  }, [router])
 
   // Camera handling
   const startCamera = async () => {
@@ -192,7 +196,7 @@ export default function AttendancePage() {
         videoRef.current.play()
       }
     } catch {
-      setStatusMessage('Camera access was denied. Please allow camera access.')
+      setStatusMessage('Camera access was denied. Please allow camera permissions.')
       setCameraActive(false)
     }
   }
@@ -210,7 +214,6 @@ export default function AttendancePage() {
       setCapturedPhoto(dataUrl)
     }
 
-    // Stop video stream
     const stream = video.srcObject as MediaStream
     if (stream) stream.getTracks().forEach((t) => t.stop())
     setCameraActive(false)
@@ -235,13 +238,17 @@ export default function AttendancePage() {
       const blob = new Blob([byteArray], { type: 'image/jpeg' })
 
       const fileName = `${profile.id}/${new Date().toISOString().split('T')[0]}_${type}_${Date.now()}.jpg`
-      const { error: uploadErr } = await supabase.storage.from('attendance-photos').upload(fileName, blob, {
-        contentType: 'image/jpeg',
-        upsert: true,
-      })
+      const { error: uploadErr } = await supabase.storage
+        .from('attendance-photos')
+        .upload(fileName, blob, {
+          contentType: 'image/jpeg',
+          upsert: true,
+        })
 
       if (uploadErr) return null
-      const { data: publicUrlData } = supabase.storage.from('attendance-photos').getPublicUrl(fileName)
+      const { data: publicUrlData } = supabase.storage
+        .from('attendance-photos')
+        .getPublicUrl(fileName)
       return publicUrlData.publicUrl
     } catch {
       return null
@@ -266,7 +273,7 @@ export default function AttendancePage() {
     return { status: 'on_time', minutes: 0 }
   }
 
-  // Calculate overtime relative to scheduled end
+  // Calculate overtime
   const computeOvertime = () => {
     const now = new Date()
     const currentHour = now.getHours()
@@ -291,7 +298,12 @@ export default function AttendancePage() {
     }
 
     setSubmitting(true)
-    setStatusMessage('Uploading selfie and verifying location...')
+    setStatusMessage('Uploading selfie & saving location...')
+
+    let finalAddress = detectedAddress
+    if (!finalAddress && currentCoords) {
+      finalAddress = await fetchAddressFromCoords(currentCoords.lat, currentCoords.lng)
+    }
 
     const photoUrl = await uploadPhoto(capturedPhoto, 'in')
     const today = new Date().toISOString().split('T')[0]
@@ -305,6 +317,7 @@ export default function AttendancePage() {
       clock_in_lat: currentCoords?.lat || null,
       clock_in_lng: currentCoords?.lng || null,
       clock_in_accuracy: currentCoords?.accuracy || null,
+      clock_in_address: finalAddress || 'Location logged without street details',
       clock_in_photo_url: photoUrl,
       status: 'present',
       punctuality_status: punctualityStatus,
@@ -332,15 +345,21 @@ export default function AttendancePage() {
     }
   }
 
-  // Execute Clock Out with Handover Note
+  // Execute Clock Out
   const submitClockOut = async () => {
     if (!profile || !todayRecord) return
     if (!capturedPhoto) {
-      alert('Please take a checkout verification selfie first.')
+      alert('Please take a checkout selfie first.')
       return
     }
 
     setSubmitting(true)
+
+    let finalAddress = detectedAddress
+    if (!finalAddress && currentCoords) {
+      finalAddress = await fetchAddressFromCoords(currentCoords.lat, currentCoords.lng)
+    }
+
     const photoUrl = await uploadPhoto(capturedPhoto, 'out')
     const overtimeMins = computeOvertime()
 
@@ -351,6 +370,7 @@ export default function AttendancePage() {
         clock_out_lat: currentCoords?.lat || null,
         clock_out_lng: currentCoords?.lng || null,
         clock_out_accuracy: currentCoords?.accuracy || null,
+        clock_out_address: finalAddress || 'Location logged without street details',
         clock_out_photo_url: photoUrl,
         overtime_minutes: overtimeMins,
         handover_notes: handoverNote.trim() || null,
@@ -398,8 +418,8 @@ export default function AttendancePage() {
           </div>
         </div>
 
-        {/* Verification Status Banner */}
-        <div className="bg-white border border-[#eaeae5] p-4 flex flex-wrap items-center justify-between gap-3 text-xs">
+        {/* Location & Store Info Strip */}
+        <div className="bg-white border border-[#eaeae5] p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
           <div>
             <span className="text-[10px] uppercase tracking-wider text-[#73726c] block">
               ASSIGNED STORE
@@ -409,27 +429,19 @@ export default function AttendancePage() {
             </span>
           </div>
 
-          <div className="flex items-center space-x-2">
-            <span
-              className={`w-2 h-2 rounded-full ${
-                distanceMeters === null
-                  ? 'bg-neutral-300'
-                  : isWithinRadius
-                  ? 'bg-emerald-500'
-                  : 'bg-rose-500'
-              }`}
-            />
-            <span className="font-mono text-[11px] text-[#73726c]">
-              {distanceMeters !== null
-                ? `${distanceMeters}m from boutique (${isWithinRadius ? 'In-Store Verified' : 'Outside Boundary'})`
-                : 'Detecting GPS proximity...'}
+          <div className="sm:text-right max-w-sm">
+            <span className="text-[10px] uppercase tracking-wider text-[#73726c] block">
+              DETECTED LOCATION
+            </span>
+            <span className="font-mono text-[11px] text-[#171716] truncate block">
+              {detectingLocation ? 'Resolving street address...' : detectedAddress || 'GPS locked'}
             </span>
           </div>
         </div>
 
         {/* Attendance Action Box */}
         <div className="bg-white border border-[#eaeae5] p-6 space-y-6">
-          {/* Selfie Capture Box */}
+          {/* Selfie Box */}
           <div className="flex flex-col items-center justify-center space-y-4">
             <div className="relative w-64 h-64 bg-[#fbfbf9] border border-[#eaeae5] flex items-center justify-center overflow-hidden">
               {cameraActive ? (
@@ -447,12 +459,12 @@ export default function AttendancePage() {
             </div>
             <canvas ref={canvasRef} className="hidden" />
 
-            {/* Camera Control Buttons */}
+            {/* Camera Controls */}
             <div className="flex items-center space-x-3">
-              {!cameraActive && !capturedPhoto && (
+              {!cameraActive && !capturedPhoto && !todayRecord?.clock_out_at && (
                 <button
                   onClick={startCamera}
-                  disabled={loading || !!todayRecord?.clock_out_at}
+                  disabled={loading}
                   className="px-4 py-2 bg-black text-white text-xs uppercase tracking-wider hover:bg-neutral-800 disabled:opacity-30 transition"
                 >
                   Start Camera
@@ -479,7 +491,7 @@ export default function AttendancePage() {
             </div>
           </div>
 
-          {/* Action Button & Status Indicators */}
+          {/* Action Trigger */}
           <div className="border-t border-[#eaeae5] pt-5 space-y-4">
             {!todayRecord?.clock_in_at ? (
               <button
@@ -487,13 +499,13 @@ export default function AttendancePage() {
                 disabled={submitting || !capturedPhoto}
                 className="w-full py-3.5 bg-[#171716] hover:bg-neutral-800 disabled:bg-neutral-200 disabled:text-neutral-400 text-white text-xs uppercase tracking-widest transition"
               >
-                {submitting ? 'Verifying & Clocking In...' : 'Verify & Clock In'}
+                {submitting ? 'Recording Clock In...' : 'Verify & Clock In'}
               </button>
             ) : !todayRecord?.clock_out_at ? (
               <button
                 onClick={() => {
                   if (!capturedPhoto) {
-                    alert('Please snap a checkout selfie before clocking out.')
+                    alert('Please take a checkout selfie before clocking out.')
                     return
                   }
                   setShowHandoverModal(true)
