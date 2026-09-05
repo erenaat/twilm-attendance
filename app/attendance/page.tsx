@@ -1,614 +1,587 @@
 'use client'
 
-import { useState, useRef, useEffect } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import Image from 'next/image'
-import { User } from '@supabase/supabase-js'
 import { supabase } from '../lib/supabase'
 import StaffNav from '../components/StaffNav'
 
 interface Store {
   id: string
   name: string
-  code: string | null
+  lat: number
+  lng: number
+  radius_meters: number
 }
 
-interface Profile {
+interface ProfileData {
   id: string
-  role: string | null
+  full_name: string | null
+  email: string | null
+  role: string
   store_id: string | null
+  stores?: Store | null
 }
 
-interface AttendanceItem {
+interface AttendanceToday {
   id: string
   work_date: string
   clock_in_at: string | null
+  clock_in_lat: number | null
+  clock_in_lng: number | null
   clock_in_photo_url: string | null
-  clock_in_address: string | null
   clock_out_at: string | null
+  clock_out_lat: number | null
+  clock_out_lng: number | null
   clock_out_photo_url: string | null
-  clock_out_address: string | null
-  store_id: string | null
-  stores?: { name: string } | null
+  status: string
+  punctuality_status?: string | null
+  late_minutes?: number | null
+  overtime_minutes?: number | null
+  handover_notes?: string | null
+  cash_drawer_balance?: string | null
 }
 
 export default function AttendancePage() {
   const router = useRouter()
   const videoRef = useRef<HTMLVideoElement | null>(null)
-  const [stream, setStream] = useState<MediaStream | null>(null)
-  const [photoData, setPhotoData] = useState<string | null>(null)
-  const [loading, setLoading] = useState(false)
-  const [statusMessage, setStatusMessage] = useState('')
-  const [todayRecord, setTodayRecord] = useState<AttendanceItem | null>(null)
-  const [historyRecords, setHistoryRecords] = useState<AttendanceItem[]>([])
-  const [stores, setStores] = useState<Store[]>([])
-  const [selectedStoreId, setSelectedStoreId] = useState<string>('')
-  const [user, setUser] = useState<User | null>(null)
-  const [profile, setProfile] = useState<Profile | null>(null)
-  const [activeTab, setActiveTab] = useState<'today' | 'history'>('today')
+  const canvasRef = useRef<HTMLCanvasElement | null>(null)
+
+  const [profile, setProfile] = useState<ProfileData | null>(null)
+  const [assignedStore, setAssignedStore] = useState<Store | null>(null)
+  const [todayRecord, setTodayRecord] = useState<AttendanceToday | null>(null)
+  const [scheduledStart, setScheduledStart] = useState<string>('08:40')
+  const [scheduledEnd, setScheduledEnd] = useState<string>('17:40')
+
+  const [cameraActive, setCameraActive] = useState(false)
+  const [capturedPhoto, setCapturedPhoto] = useState<string | null>(null)
+  const [currentCoords, setCurrentCoords] = useState<{ lat: number; lng: number; accuracy: number } | null>(null)
+  const [distanceMeters, setDistanceMeters] = useState<number | null>(null)
+  const [isWithinRadius, setIsWithinRadius] = useState<boolean>(true)
+
+  // Handover Modal State
+  const [showHandoverModal, setShowHandoverModal] = useState(false)
+  const [handoverNote, setHandoverNote] = useState('')
+  const [cashBalance, setCashBalance] = useState('')
+
+  const [loading, setLoading] = useState(true)
+  const [submitting, setSubmitting] = useState(false)
+  const [statusMessage, setStatusMessage] = useState<string>('')
+
+  // Calculate distance between two coordinates in meters
+  const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number) => {
+    const R = 6371e3
+    const φ1 = (lat1 * Math.PI) / 180
+    const φ2 = (lat2 * Math.PI) / 180
+    const Δφ = ((lat2 - lat1) * Math.PI) / 180
+    const Δλ = ((lon2 - lon1) * Math.PI) / 180
+
+    const a =
+      Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
+      Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) * Math.sin(Δλ / 2)
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+    return Math.round(R * c)
+  }
+
+  // Geolocation watch
+  const requestLocation = useCallback((targetStore?: Store | null) => {
+    if (!navigator.geolocation) {
+      setStatusMessage('Geolocation is not supported by your device.')
+      return
+    }
+
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const coords = {
+          lat: pos.coords.latitude,
+          lng: pos.coords.longitude,
+          accuracy: Math.round(pos.coords.accuracy),
+        }
+        setCurrentCoords(coords)
+
+        const storeToCheck = targetStore || assignedStore
+        if (storeToCheck && storeToCheck.lat && storeToCheck.lng) {
+          const dist = calculateDistance(coords.lat, coords.lng, storeToCheck.lat, storeToCheck.lng)
+          setDistanceMeters(dist)
+          setIsWithinRadius(dist <= (storeToCheck.radius_meters || 150))
+        }
+      },
+      (err) => {
+        console.warn('Geolocation warning:', err.message)
+        setStatusMessage('Please enable location access to verify store presence.')
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+    )
+  }, [assignedStore])
 
   useEffect(() => {
-    const init = async () => {
+    let isMounted = true
+
+    const loadInitialData = async () => {
       const {
         data: { session },
       } = await supabase.auth.getSession()
+
       if (!session) {
         router.push('/login')
         return
       }
-      setUser(session.user)
 
+      // Fetch profile with assigned store
       const { data: profData } = await supabase
         .from('profiles')
-        .select('*')
+        .select('id, full_name, email, role, store_id, stores(id, name, lat, lng, radius_meters)')
         .eq('id', session.user.id)
         .maybeSingle()
-      if (profData) {
-        setProfile(profData)
-        if (profData.store_id) setSelectedStoreId(profData.store_id)
-      }
 
-      const { data: storesData } = await supabase
-        .from('stores')
-        .select('*')
-        .order('name')
-      if (storesData) {
-        setStores(storesData)
-        if (!selectedStoreId && storesData.length > 0) {
-          setSelectedStoreId(storesData[0].id)
+      if (profData && isMounted) {
+        setProfile(profData as unknown as ProfileData)
+        if (profData.stores) {
+          setAssignedStore(profData.stores as unknown as Store)
+          requestLocation(profData.stores as unknown as Store)
         }
       }
 
+      // Fetch today's schedule start/end if exists
       const today = new Date().toISOString().split('T')[0]
-      const { data: todayData } = await supabase
+      const { data: schData } = await supabase
+        .from('schedules')
+        .select('shift_start, shift_end, is_day_off')
+        .eq('user_id', session.user.id)
+        .eq('shift_date', today)
+        .maybeSingle()
+
+      if (schData && isMounted) {
+        if (schData.shift_start) setScheduledStart(schData.shift_start.slice(0, 5))
+        if (schData.shift_end) setScheduledEnd(schData.shift_end.slice(0, 5))
+      }
+
+      // Fetch today's attendance record
+      const { data: attData } = await supabase
         .from('attendance')
-        .select('*, stores(name)')
+        .select('*')
         .eq('user_id', session.user.id)
         .eq('work_date', today)
         .maybeSingle()
 
-      if (todayData) {
-        setTodayRecord(todayData)
-        if (todayData.store_id) setSelectedStoreId(todayData.store_id)
+      if (attData && isMounted) {
+        setTodayRecord(attData as AttendanceToday)
       }
 
-      const { data: pastData } = await supabase
-        .from('attendance')
-        .select('*, stores(name)')
-        .eq('user_id', session.user.id)
-        .order('work_date', { ascending: false })
-        .limit(30)
-
-      if (pastData) {
-        setHistoryRecords(pastData)
-      }
+      if (isMounted) setLoading(false)
     }
-    init()
-  }, [router, selectedStoreId])
 
+    loadInitialData()
+
+    return () => {
+      isMounted = false
+    }
+  }, [router, requestLocation])
+
+  // Camera handling
   const startCamera = async () => {
+    setCapturedPhoto(null)
+    setCameraActive(true)
     try {
-      const mediaStream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: 'user' },
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 640 } },
         audio: false,
       })
-      setStream(mediaStream)
       if (videoRef.current) {
-        videoRef.current.srcObject = mediaStream
+        videoRef.current.srcObject = stream
+        videoRef.current.play()
       }
     } catch {
-      alert('Camera access denied. Camera is required for attendance.')
+      setStatusMessage('Camera access was denied. Please allow camera access.')
+      setCameraActive(false)
     }
   }
 
-  const takeSnapshot = () => {
-    if (!videoRef.current) return
-    const canvas = document.createElement('canvas')
+  const captureSnapshot = () => {
+    if (!videoRef.current || !canvasRef.current) return
+    const video = videoRef.current
+    const canvas = canvasRef.current
     canvas.width = 480
-    canvas.height = 640
+    canvas.height = 480
     const ctx = canvas.getContext('2d')
     if (ctx) {
-      ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height)
-      const dataUrl = canvas.toDataURL('image/jpeg', 0.6)
-      setPhotoData(dataUrl)
-      if (stream) {
-        stream.getTracks().forEach((track) => track.stop())
-        setStream(null)
-      }
+      ctx.drawImage(video, 0, 0, 480, 480)
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.8)
+      setCapturedPhoto(dataUrl)
     }
+
+    // Stop video stream
+    const stream = video.srcObject as MediaStream
+    if (stream) stream.getTracks().forEach((t) => t.stop())
+    setCameraActive(false)
   }
 
-  const getCoordinates = (): Promise<GeolocationPosition> => {
-    return new Promise((resolve, reject) => {
-      if (!navigator.geolocation) {
-        reject(new Error('Geolocation is not supported by your browser'))
-      } else {
-        navigator.geolocation.getCurrentPosition(resolve, reject, {
-          enableHighAccuracy: true,
-          timeout: 10000,
-        })
-      }
-    })
+  const retakePhoto = () => {
+    setCapturedPhoto(null)
+    startCamera()
   }
 
-  const fetchAddress = async (lat: number, lng: number): Promise<string> => {
+  // Upload photo to Supabase Storage
+  const uploadPhoto = async (dataUrl: string, type: 'in' | 'out'): Promise<string | null> => {
+    if (!profile) return null
     try {
-      const res = await fetch(
-        `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18&addressdetails=1`
-      )
-      if (!res.ok) return 'Location captured'
-      const data = await res.json()
-      const addr = data.address || {}
-      const parts = [
-        addr.road || addr.pedestrian || addr.building,
-        addr.village || addr.suburb || addr.neighbourhood,
-        addr.city || addr.town || addr.county || addr.state,
-      ].filter(Boolean)
+      const base64 = dataUrl.split(',')[1]
+      const byteCharacters = atob(base64)
+      const byteNumbers = new Array(byteCharacters.length)
+      for (let i = 0; i < byteCharacters.length; i++) {
+        byteNumbers[i] = byteCharacters.charCodeAt(i)
+      }
+      const byteArray = new Uint8Array(byteNumbers)
+      const blob = new Blob([byteArray], { type: 'image/jpeg' })
 
-      return parts.length > 0
-        ? parts.join(', ')
-        : data.display_name || 'Location captured'
+      const fileName = `${profile.id}/${new Date().toISOString().split('T')[0]}_${type}_${Date.now()}.jpg`
+      const { error: uploadErr } = await supabase.storage.from('attendance-photos').upload(fileName, blob, {
+        contentType: 'image/jpeg',
+        upsert: true,
+      })
+
+      if (uploadErr) return null
+      const { data: publicUrlData } = supabase.storage.from('attendance-photos').getPublicUrl(fileName)
+      return publicUrlData.publicUrl
     } catch {
-      return 'Location captured'
+      return null
     }
   }
 
-  const base64ToBlob = (base64: string) => {
-    const arr = base64.split(',')
-    const mimeMatch = arr[0].match(/:(.*?);/)
-    const mime = mimeMatch ? mimeMatch[1] : 'image/jpeg'
-    const bstr = atob(arr[1])
-    let n = bstr.length
-    const u8arr = new Uint8Array(n)
-    while (n--) {
-      u8arr[n] = bstr.charCodeAt(n)
+  // Calculate punctuality relative to scheduled start (e.g. 08:40 + 5m grace = 08:45)
+  const computePunctuality = () => {
+    const now = new Date()
+    const currentHour = now.getHours()
+    const currentMin = now.getMinutes()
+    const totalCurrentMins = currentHour * 60 + currentMin
+
+    const [startH, startM] = scheduledStart.split(':').map((v) => parseInt(v, 10))
+    const scheduledStartMins = startH * 60 + startM
+    const gracePeriodMins = 5
+
+    if (totalCurrentMins > scheduledStartMins + gracePeriodMins) {
+      const lateBy = totalCurrentMins - scheduledStartMins
+      return { status: 'late', minutes: lateBy }
     }
-    return new Blob([u8arr], { type: mime })
+    return { status: 'on_time', minutes: 0 }
   }
 
-  const handleAttendance = async (type: 'clock_in' | 'clock_out') => {
-    if (!photoData || !user) {
-      alert('Please take a selfie first.')
+  // Calculate overtime relative to scheduled end
+  const computeOvertime = () => {
+    const now = new Date()
+    const currentHour = now.getHours()
+    const currentMin = now.getMinutes()
+    const totalCurrentMins = currentHour * 60 + currentMin
+
+    const [endH, endM] = scheduledEnd.split(':').map((v) => parseInt(v, 10))
+    const scheduledEndMins = endH * 60 + endM
+
+    if (totalCurrentMins > scheduledEndMins + 10) {
+      return totalCurrentMins - scheduledEndMins
+    }
+    return 0
+  }
+
+  // Execute Clock In
+  const handleClockIn = async () => {
+    if (!profile) return
+    if (!capturedPhoto) {
+      alert('Please take a verification selfie first.')
       return
     }
 
-    setLoading(true)
-    setStatusMessage('Capturing GPS location...')
+    setSubmitting(true)
+    setStatusMessage('Uploading selfie and verifying location...')
 
-    try {
-      const pos = await getCoordinates()
-      const { latitude, longitude, accuracy } = pos.coords
+    const photoUrl = await uploadPhoto(capturedPhoto, 'in')
+    const today = new Date().toISOString().split('T')[0]
+    const { status: punctualityStatus, minutes: lateMinutes } = computePunctuality()
 
-      setStatusMessage('Finding address...')
-      const address = await fetchAddress(latitude, longitude)
+    const payload = {
+      user_id: profile.id,
+      store_id: assignedStore?.id || profile.store_id || null,
+      work_date: today,
+      clock_in_at: new Date().toISOString(),
+      clock_in_lat: currentCoords?.lat || null,
+      clock_in_lng: currentCoords?.lng || null,
+      clock_in_accuracy: currentCoords?.accuracy || null,
+      clock_in_photo_url: photoUrl,
+      status: 'present',
+      punctuality_status: punctualityStatus,
+      late_minutes: lateMinutes,
+    }
 
-      setStatusMessage('Uploading selfie...')
-      const blob = base64ToBlob(photoData)
-      const fileName = `${user.id}/${Date.now()}_${type}.jpg`
+    const { data, error } = await supabase
+      .from('attendance')
+      .upsert(payload, { onConflict: 'user_id,work_date' })
+      .select()
+      .single()
 
-      const { error: uploadError } = await supabase.storage
-        .from('selfies')
-        .upload(fileName, blob, { contentType: 'image/jpeg' })
+    setSubmitting(false)
 
-      if (uploadError) throw uploadError
-
-      const {
-        data: { publicUrl },
-      } = supabase.storage.from('selfies').getPublicUrl(fileName)
-
-      const today = new Date().toISOString().split('T')[0]
-      const now = new Date().toISOString()
-
-      setStatusMessage('Saving record...')
-
-      if (type === 'clock_in') {
-        const { data, error } = await supabase
-          .from('attendance')
-          .insert({
-            user_id: user.id,
-            work_date: today,
-            clock_in_at: now,
-            clock_in_lat: latitude,
-            clock_in_lng: longitude,
-            clock_in_accuracy: accuracy,
-            clock_in_photo_url: publicUrl,
-            clock_in_address: address,
-            store_id: selectedStoreId || null,
-            status: 'incomplete',
-          })
-          .select('*, stores(name)')
-          .single()
-
-        if (error) throw error
-        setTodayRecord(data)
-        setHistoryRecords((prev) => [
-          data,
-          ...prev.filter((r) => r.id !== data.id),
-        ])
-        alert('Clock-in recorded successfully.')
-      } else {
-        if (!todayRecord) return
-        const { data, error } = await supabase
-          .from('attendance')
-          .update({
-            clock_out_at: now,
-            clock_out_lat: latitude,
-            clock_out_lng: longitude,
-            clock_out_accuracy: accuracy,
-            clock_out_photo_url: publicUrl,
-            clock_out_address: address,
-            store_id: selectedStoreId || todayRecord.store_id || null,
-            status: 'present',
-          })
-          .eq('id', todayRecord.id)
-          .select('*, stores(name)')
-          .single()
-
-        if (error) throw error
-        setTodayRecord(data)
-        setHistoryRecords((prev) => [
-          data,
-          ...prev.filter((r) => r.id !== data.id),
-        ])
-        alert('Clock-out recorded successfully.')
-      }
-
-      setPhotoData(null)
-    } catch (err) {
-      const errorMessage =
-        err instanceof Error ? err.message : 'Location or upload failed.'
-      alert('Error: ' + errorMessage)
-    } finally {
-      setLoading(false)
-      setStatusMessage('')
+    if (error) {
+      alert('Failed to clock in: ' + error.message)
+    } else if (data) {
+      setTodayRecord(data as AttendanceToday)
+      setCapturedPhoto(null)
+      alert(
+        punctualityStatus === 'late'
+          ? `Clocked in successfully. Marked as LATE (${lateMinutes} mins).`
+          : 'Clocked in successfully. Status: ON-TIME.'
+      )
     }
   }
 
-  const totalDaysRecorded = historyRecords.length
-  const completedDays = historyRecords.filter((r) => r.clock_out_at).length
-  const attendanceRate =
-    totalDaysRecorded > 0
-      ? Math.round((completedDays / totalDaysRecorded) * 100)
-      : 100
+  // Execute Clock Out with Handover Note
+  const submitClockOut = async () => {
+    if (!profile || !todayRecord) return
+    if (!capturedPhoto) {
+      alert('Please take a checkout verification selfie first.')
+      return
+    }
+
+    setSubmitting(true)
+    const photoUrl = await uploadPhoto(capturedPhoto, 'out')
+    const overtimeMins = computeOvertime()
+
+    const { data, error } = await supabase
+      .from('attendance')
+      .update({
+        clock_out_at: new Date().toISOString(),
+        clock_out_lat: currentCoords?.lat || null,
+        clock_out_lng: currentCoords?.lng || null,
+        clock_out_accuracy: currentCoords?.accuracy || null,
+        clock_out_photo_url: photoUrl,
+        overtime_minutes: overtimeMins,
+        handover_notes: handoverNote.trim() || null,
+        cash_drawer_balance: cashBalance.trim() || null,
+      })
+      .eq('id', todayRecord.id)
+      .select()
+      .single()
+
+    setSubmitting(false)
+    setShowHandoverModal(false)
+
+    if (error) {
+      alert('Failed to clock out: ' + error.message)
+    } else if (data) {
+      setTodayRecord(data as AttendanceToday)
+      setCapturedPhoto(null)
+      alert('Shift completed and handover note saved successfully.')
+    }
+  }
 
   return (
-    <main className="min-h-screen bg-[#fbfbf9] pb-24 sm:pb-12 text-[#171716]">
-      <StaffNav userRole={profile?.role || undefined} />
+    <main className="min-h-screen bg-[#fbfbf9] pb-32 md:pb-16 text-[#171716]">
+      <StaffNav userRole={profile?.role} />
 
-      <div className="max-w-4xl mx-auto px-4 pt-8 space-y-6">
-        <div className="border-b border-[#eaeae5] pb-4 flex flex-col sm:flex-row sm:items-end justify-between gap-4">
+      <div className="max-w-3xl mx-auto px-4 pt-6 md:pt-8 space-y-6">
+        {/* Header */}
+        <div className="border-b border-[#eaeae5] pb-4 flex flex-col sm:flex-row sm:items-end justify-between gap-3">
           <div>
             <span className="text-[10px] tracking-[0.25em] uppercase text-[#73726c] font-mono">
-              STAFF OS / ATTENDANCE
+              STAFF OS / PRESENCE
             </span>
             <h1 className="text-2xl sm:text-3xl font-light tracking-tight mt-1">
-              ATTENDANCE{' '}
-              <span className="font-serif italic font-normal">LOG</span>
+              STORE <span className="font-serif italic font-normal">ATTENDANCE</span>
             </h1>
           </div>
 
-          <div className="flex border border-[#eaeae5] bg-white p-0.5 text-xs">
-            <button
-              onClick={() => setActiveTab('today')}
-              className={`px-4 py-1.5 uppercase tracking-wider transition-colors ${
-                activeTab === 'today'
-                  ? 'bg-[#171716] text-white font-medium'
-                  : 'text-[#73726c] hover:text-black'
-              }`}
-            >
-              Action / Today
-            </button>
-            <button
-              onClick={() => setActiveTab('history')}
-              className={`px-4 py-1.5 uppercase tracking-wider transition-colors ${
-                activeTab === 'history'
-                  ? 'bg-[#171716] text-white font-medium'
-                  : 'text-[#73726c] hover:text-black'
-              }`}
-            >
-              History ({historyRecords.length})
-            </button>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-3 bg-white border border-[#eaeae5] divide-x divide-[#eaeae5] text-center py-4">
-          <div>
-            <span className="text-[10px] tracking-widest uppercase text-[#73726c] block">
-              DAYS RECORDED
+          <div className="text-right">
+            <span className="text-[10px] uppercase tracking-wider text-[#73726c] block">
+              SCHEDULED SHIFT
             </span>
-            <span className="text-xl sm:text-2xl font-mono font-light mt-1 block">
-              {totalDaysRecorded}
-            </span>
-          </div>
-          <div>
-            <span className="text-[10px] tracking-widest uppercase text-[#73726c] block">
-              COMPLETED
-            </span>
-            <span className="text-xl sm:text-2xl font-mono font-light mt-1 block">
-              {completedDays}
-            </span>
-          </div>
-          <div>
-            <span className="text-[10px] tracking-widest uppercase text-[#73726c] block">
-              ATTENDANCE RATE
-            </span>
-            <span className="text-xl sm:text-2xl font-mono font-light mt-1 block">
-              {attendanceRate}%
+            <span className="text-xs font-mono font-medium text-[#171716]">
+              {scheduledStart} — {scheduledEnd}
             </span>
           </div>
         </div>
 
-        {activeTab === 'today' && (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start">
-            <div className="bg-white border border-[#eaeae5] p-5 space-y-4">
-              <div className="flex items-center justify-between">
-                <span className="text-xs uppercase tracking-wider text-[#73726c]">
-                  Verification Camera
-                </span>
-                {stream && (
-                  <span className="flex items-center space-x-1.5 text-[10px] uppercase tracking-wider text-red-600">
-                    <span className="w-2 h-2 rounded-full bg-red-600 animate-pulse" />
-                    <span>Live</span>
+        {/* Verification Status Banner */}
+        <div className="bg-white border border-[#eaeae5] p-4 flex flex-wrap items-center justify-between gap-3 text-xs">
+          <div>
+            <span className="text-[10px] uppercase tracking-wider text-[#73726c] block">
+              ASSIGNED STORE
+            </span>
+            <span className="font-medium text-[#171716]">
+              {assignedStore?.name || 'Office / Headquarter'}
+            </span>
+          </div>
+
+          <div className="flex items-center space-x-2">
+            <span
+              className={`w-2 h-2 rounded-full ${
+                distanceMeters === null
+                  ? 'bg-neutral-300'
+                  : isWithinRadius
+                  ? 'bg-emerald-500'
+                  : 'bg-rose-500'
+              }`}
+            />
+            <span className="font-mono text-[11px] text-[#73726c]">
+              {distanceMeters !== null
+                ? `${distanceMeters}m from boutique (${isWithinRadius ? 'In-Store Verified' : 'Outside Boundary'})`
+                : 'Detecting GPS proximity...'}
+            </span>
+          </div>
+        </div>
+
+        {/* Attendance Action Box */}
+        <div className="bg-white border border-[#eaeae5] p-6 space-y-6">
+          {/* Selfie Capture Box */}
+          <div className="flex flex-col items-center justify-center space-y-4">
+            <div className="relative w-64 h-64 bg-[#fbfbf9] border border-[#eaeae5] flex items-center justify-center overflow-hidden">
+              {cameraActive ? (
+                <video ref={videoRef} playsInline autoPlay className="w-full h-full object-cover" />
+              ) : capturedPhoto ? (
+                <Image src={capturedPhoto} alt="Verification Selfie" fill className="object-cover" />
+              ) : (
+                <div className="text-center p-4">
+                  <span className="text-[10px] uppercase tracking-widest text-[#73726c] font-mono block">
+                    CAMERA VERIFICATION
                   </span>
-                )}
-              </div>
-
-              <div className="relative aspect-[3/4] bg-[#171716] rounded-none overflow-hidden flex items-center justify-center border border-[#eaeae5]">
-                {photoData ? (
-                  <Image
-                    src={photoData}
-                    alt="Captured Selfie"
-                    fill
-                    unoptimized
-                    className="object-cover"
-                  />
-                ) : (
-                  <video
-                    ref={videoRef}
-                    autoPlay
-                    playsInline
-                    muted
-                    className="w-full h-full object-cover"
-                  />
-                )}
-
-                {!stream && !photoData && (
-                  <button
-                    onClick={startCamera}
-                    className="absolute bg-white text-[#171716] px-5 py-2.5 text-xs uppercase tracking-widest border border-[#eaeae5] hover:bg-neutral-50 shadow-sm"
-                  >
-                    Open Camera
-                  </button>
-                )}
-              </div>
-
-              <div className="flex gap-2">
-                {stream && (
-                  <button
-                    onClick={takeSnapshot}
-                    className="w-full py-3 bg-[#171716] hover:bg-neutral-800 text-white text-xs uppercase tracking-widest transition"
-                  >
-                    Capture Snapshot
-                  </button>
-                )}
-
-                {photoData && (
-                  <button
-                    onClick={() => {
-                      setPhotoData(null)
-                      startCamera()
-                    }}
-                    className="w-full py-3 bg-white border border-[#eaeae5] text-[#171716] hover:bg-neutral-50 text-xs uppercase tracking-widest transition"
-                  >
-                    Retake Photo
-                  </button>
-                )}
-              </div>
+                  <p className="text-xs text-[#73726c] mt-1">Take a selfie to verify check-in</p>
+                </div>
+              )}
             </div>
+            <canvas ref={canvasRef} className="hidden" />
 
-            <div className="bg-white border border-[#eaeae5] p-6 space-y-6">
-              <div>
-                <span className="text-[10px] tracking-widest uppercase text-[#73726c] block">
-                  STORE ALLOCATION
-                </span>
-                <select
-                  value={selectedStoreId}
-                  onChange={(e) => setSelectedStoreId(e.target.value)}
-                  disabled={Boolean(todayRecord?.clock_out_at)}
-                  className="mt-2 w-full p-2.5 text-xs bg-[#fbfbf9] border border-[#eaeae5] text-[#171716] focus:outline-none focus:border-black"
+            {/* Camera Control Buttons */}
+            <div className="flex items-center space-x-3">
+              {!cameraActive && !capturedPhoto && (
+                <button
+                  onClick={startCamera}
+                  disabled={loading || !!todayRecord?.clock_out_at}
+                  className="px-4 py-2 bg-black text-white text-xs uppercase tracking-wider hover:bg-neutral-800 disabled:opacity-30 transition"
                 >
-                  {stores.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.name} {s.code ? `(${s.code})` : ''}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="space-y-3 pt-4 border-t border-[#eaeae5]">
-                <div className="flex justify-between text-xs">
-                  <span className="text-[#73726c]">Clock In Timestamp:</span>
-                  <span className="font-mono font-medium">
-                    {todayRecord?.clock_in_at
-                      ? new Date(todayRecord.clock_in_at).toLocaleTimeString()
-                      : 'Pending'}
-                  </span>
-                </div>
-                {todayRecord?.clock_in_address && (
-                  <div className="text-[11px] text-[#73726c] bg-[#fbfbf9] p-2.5 border border-[#eaeae5]">
-                    {todayRecord.clock_in_address}
-                  </div>
-                )}
-
-                <div className="flex justify-between text-xs pt-2">
-                  <span className="text-[#73726c]">Clock Out Timestamp:</span>
-                  <span className="font-mono font-medium">
-                    {todayRecord?.clock_out_at
-                      ? new Date(todayRecord.clock_out_at).toLocaleTimeString()
-                      : 'Pending'}
-                  </span>
-                </div>
-                {todayRecord?.clock_out_address && (
-                  <div className="text-[11px] text-[#73726c] bg-[#fbfbf9] p-2.5 border border-[#eaeae5]">
-                    {todayRecord.clock_out_address}
-                  </div>
-                )}
-              </div>
-
-              {statusMessage && (
-                <p className="text-center text-xs text-neutral-600 font-mono tracking-wider animate-pulse">
-                  {statusMessage}
-                </p>
+                  Start Camera
+                </button>
               )}
 
-              <div className="pt-4 border-t border-[#eaeae5]">
-                {!todayRecord?.clock_in_at ? (
-                  <button
-                    onClick={() => handleAttendance('clock_in')}
-                    disabled={loading || !photoData}
-                    className="w-full py-4 bg-[#171716] hover:bg-neutral-800 disabled:bg-neutral-200 disabled:text-neutral-400 text-white text-xs font-medium tracking-[0.2em] uppercase transition"
-                  >
-                    {loading ? 'VERIFYING...' : 'CONFIRM CLOCK IN'}
-                  </button>
-                ) : !todayRecord?.clock_out_at ? (
-                  <button
-                    onClick={() => handleAttendance('clock_out')}
-                    disabled={loading || !photoData}
-                    className="w-full py-4 bg-[#171716] hover:bg-neutral-800 disabled:bg-neutral-200 disabled:text-neutral-400 text-white text-xs font-medium tracking-[0.2em] uppercase transition"
-                  >
-                    {loading ? 'VERIFYING...' : 'CONFIRM CLOCK OUT'}
-                  </button>
-                ) : (
-                  <div className="text-center text-xs tracking-widest uppercase text-emerald-800 bg-emerald-50/60 border border-emerald-200 py-3.5">
-                    ✓ TODAY&apos;S SHIFT COMPLETED
-                  </div>
-                )}
-              </div>
+              {cameraActive && (
+                <button
+                  onClick={captureSnapshot}
+                  className="px-4 py-2 bg-black text-white text-xs uppercase tracking-wider hover:bg-neutral-800 transition"
+                >
+                  Snap Selfie
+                </button>
+              )}
+
+              {capturedPhoto && !cameraActive && !todayRecord?.clock_out_at && (
+                <button
+                  onClick={retakePhoto}
+                  className="px-3.5 py-1.5 border border-[#eaeae5] text-xs uppercase tracking-wider text-[#73726c] hover:text-black transition"
+                >
+                  Retake Photo
+                </button>
+              )}
             </div>
           </div>
-        )}
 
-        {activeTab === 'history' && (
-          <div className="bg-white border border-[#eaeae5]">
-            <div className="p-4 border-b border-[#eaeae5]">
-              <span className="text-xs uppercase tracking-wider text-[#73726c]">
-                Recent Shifts (Last 30 Days)
-              </span>
-            </div>
-
-            {historyRecords.length === 0 ? (
-              <p className="p-8 text-center text-xs text-[#73726c]">
-                No attendance logs found yet.
-              </p>
+          {/* Action Button & Status Indicators */}
+          <div className="border-t border-[#eaeae5] pt-5 space-y-4">
+            {!todayRecord?.clock_in_at ? (
+              <button
+                onClick={handleClockIn}
+                disabled={submitting || !capturedPhoto}
+                className="w-full py-3.5 bg-[#171716] hover:bg-neutral-800 disabled:bg-neutral-200 disabled:text-neutral-400 text-white text-xs uppercase tracking-widest transition"
+              >
+                {submitting ? 'Verifying & Clocking In...' : 'Verify & Clock In'}
+              </button>
+            ) : !todayRecord?.clock_out_at ? (
+              <button
+                onClick={() => {
+                  if (!capturedPhoto) {
+                    alert('Please snap a checkout selfie before clocking out.')
+                    return
+                  }
+                  setShowHandoverModal(true)
+                }}
+                disabled={submitting}
+                className="w-full py-3.5 bg-[#171716] hover:bg-neutral-800 disabled:bg-neutral-200 text-white text-xs uppercase tracking-widest transition"
+              >
+                Proceed to Shift Handover & Clock Out
+              </button>
             ) : (
-              <div className="divide-y divide-[#eaeae5]">
-                {historyRecords.map((item) => (
-                  <div
-                    key={item.id}
-                    className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 hover:bg-[#fbfbf9] transition-colors"
-                  >
-                    <div className="flex items-center space-x-4">
-                      {item.clock_in_photo_url ? (
-                        <div className="relative w-12 h-14 border border-[#eaeae5] overflow-hidden">
-                          <Image
-                            src={item.clock_in_photo_url}
-                            alt="Selfie"
-                            fill
-                            unoptimized
-                            className="object-cover"
-                          />
-                        </div>
-                      ) : (
-                        <div className="w-12 h-14 bg-neutral-100 border border-[#eaeae5] flex items-center justify-center text-[9px] text-[#73726c]">
-                          No Photo
-                        </div>
-                      )}
-
-                      <div>
-                        <div className="flex items-center space-x-2">
-                          <span className="text-sm font-medium">
-                            {new Intl.DateTimeFormat('en-GB', {
-                              weekday: 'short',
-                              day: 'numeric',
-                              month: 'short',
-                            }).format(new Date(item.work_date))}
-                          </span>
-                          <span className="text-[10px] tracking-wider uppercase bg-neutral-100 text-[#73726c] px-2 py-0.5">
-                            {item.stores?.name || 'Store'}
-                          </span>
-                        </div>
-                        <p className="text-[11px] text-[#73726c] mt-0.5 line-clamp-1">
-                          {item.clock_in_address || 'Address logged'}
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center space-x-6 text-xs font-mono">
-                      <div>
-                        <span className="text-[9px] uppercase tracking-wider text-[#73726c] block">
-                          IN
-                        </span>
-                        <span>
-                          {item.clock_in_at
-                            ? new Date(item.clock_in_at).toLocaleTimeString(
-                                [],
-                                { hour: '2-digit', minute: '2-digit' }
-                              )
-                            : '--:--'}
-                        </span>
-                      </div>
-                      <div>
-                        <span className="text-[9px] uppercase tracking-wider text-[#73726c] block">
-                          OUT
-                        </span>
-                        <span>
-                          {item.clock_out_at
-                            ? new Date(item.clock_out_at).toLocaleTimeString(
-                                [],
-                                { hour: '2-digit', minute: '2-digit' }
-                              )
-                            : '--:--'}
-                        </span>
-                      </div>
-                      <div>
-                        <span className="text-[9px] uppercase tracking-wider text-[#73726c] block">
-                          STATUS
-                        </span>
-                        <span
-                          className={
-                            item.clock_out_at
-                              ? 'text-emerald-700 font-sans uppercase text-[10px]'
-                              : 'text-amber-700 font-sans uppercase text-[10px]'
-                          }
-                        >
-                          {item.clock_out_at ? 'Complete' : 'Incomplete'}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                ))}
+              <div className="p-4 bg-[#fbfbf9] text-center border border-[#eaeae5] text-xs">
+                <span className="font-medium text-emerald-800 uppercase tracking-wide">
+                  ✓ Shift Finished for Today
+                </span>
+                <p className="text-[#73726c] text-[11px] mt-0.5">
+                  Clock in: {new Date(todayRecord.clock_in_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} — Clock out: {new Date(todayRecord.clock_out_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                </p>
               </div>
             )}
+
+            {statusMessage && (
+              <p className="text-[11px] text-center text-[#73726c] font-mono">{statusMessage}</p>
+            )}
+          </div>
+        </div>
+
+        {/* Shift Handover Modal */}
+        {showHandoverModal && (
+          <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
+            <div className="bg-white border border-[#eaeae5] max-w-lg w-full p-6 space-y-4 shadow-xl">
+              <div>
+                <span className="text-[10px] uppercase tracking-widest text-[#73726c] font-mono block">
+                  END OF SHIFT
+                </span>
+                <h2 className="text-xl font-light tracking-tight mt-0.5">
+                  Shift Handover <span className="font-serif italic font-normal">Logbook</span>
+                </h2>
+                <p className="text-xs text-[#73726c] mt-1">
+                  Leave brief notes for the next shift associate and note the cash balance.
+                </p>
+              </div>
+
+              <div className="space-y-3">
+                <div>
+                  <label className="text-[10px] uppercase tracking-wider text-[#73726c] block mb-1">
+                    Store Handover Notes
+                  </label>
+                  <textarea
+                    rows={3}
+                    value={handoverNote}
+                    onChange={(e) => setHandoverNote(e.target.value)}
+                    placeholder="Customer reservations, fitting room checks, restock needed..."
+                    className="w-full p-2.5 text-xs bg-[#fbfbf9] border border-[#eaeae5] text-[#171716] focus:outline-none resize-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-[10px] uppercase tracking-wider text-[#73726c] block mb-1">
+                    Closing Cash Drawer / Petty Cash (Optional)
+                  </label>
+                  <input
+                    type="text"
+                    value={cashBalance}
+                    onChange={(e) => setCashBalance(e.target.value)}
+                    placeholder="e.g. IDR 1.500.000 / Balanced"
+                    className="w-full p-2 text-xs bg-[#fbfbf9] border border-[#eaeae5] text-[#171716] focus:outline-none font-mono"
+                  />
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end space-x-2 pt-2 border-t border-[#eaeae5]">
+                <button
+                  type="button"
+                  onClick={() => setShowHandoverModal(false)}
+                  className="px-4 py-2 border border-[#eaeae5] text-xs uppercase tracking-wider text-[#73726c] hover:text-black"
+                >
+                  Back
+                </button>
+                <button
+                  type="button"
+                  onClick={submitClockOut}
+                  disabled={submitting}
+                  className="px-5 py-2 bg-black text-white text-xs uppercase tracking-widest hover:bg-neutral-800 disabled:opacity-40"
+                >
+                  {submitting ? 'Submitting...' : 'Complete Clock Out'}
+                </button>
+              </div>
+            </div>
           </div>
         )}
       </div>
