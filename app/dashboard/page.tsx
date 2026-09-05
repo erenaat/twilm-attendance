@@ -30,7 +30,7 @@ export default function DashboardPage() {
   const [pendingTaskCount, setPendingTaskCount] = useState<number>(0)
   const [currentTime, setCurrentTime] = useState<string>('')
   const [currentDate, setCurrentDate] = useState<string>('')
-  const [greetingTime, setGreetingTime] = useState<string>('DAY')
+  const [greetingTime, setGreetingTime] = useState<string>('MORNING')
 
   useEffect(() => {
     const updateClock = () => {
@@ -55,9 +55,13 @@ export default function DashboardPage() {
       setCurrentDate(dateStr)
 
       const hour = parseInt(timeStr.split(':')[0], 10)
-      if (hour >= 4 && hour < 12) setGreetingTime('MORNING')
-      else if (hour >= 12 && hour < 17) setGreetingTime('AFTERNOON')
-      else setGreetingTime('EVENING')
+      if (hour < 12) {
+        setGreetingTime('MORNING')
+      } else if (hour < 18) {
+        setGreetingTime('AFTERNOON')
+      } else {
+        setGreetingTime('EVENING')
+      }
     }
 
     updateClock()
@@ -148,6 +152,7 @@ export default function DashboardPage() {
       <StaffNav userRole={profile?.role} />
 
       <div className="max-w-4xl mx-auto px-4 pt-6 md:pt-8 space-y-6">
+        {/* Header */}
         <div className="border-b border-[#eaeae5] pb-5">
           <span className="text-[10px] tracking-[0.25em] uppercase text-[#73726c] font-mono">
             STAFF OS / PERSONAL
@@ -168,6 +173,7 @@ export default function DashboardPage() {
           </div>
         </div>
 
+        {/* Shift Card */}
         <div className="bg-white border border-[#eaeae5] p-5 sm:p-6 space-y-5">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-[#eaeae5] pb-4">
             <div>
@@ -248,6 +254,7 @@ export default function DashboardPage() {
           </div>
         </div>
 
+        {/* Operational Cards */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <Link
             href="/attendance"
