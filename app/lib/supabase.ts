@@ -6,6 +6,6 @@ const supabaseUrl =
 const supabaseAnonKey =
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
   process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ||
-  'placeholder-key-for-build'
+  'temp-build-key'
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey)
