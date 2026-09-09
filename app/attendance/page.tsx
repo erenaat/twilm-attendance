@@ -17,7 +17,7 @@ interface ProfileData {
   email: string | null
   role: string
   store_id: string | null
-  stores?: Store | null
+  stores?: Store | Store[] | null
 }
 
 interface AttendanceToday {
@@ -49,8 +49,8 @@ export default function AttendancePage() {
   const [profile, setProfile] = useState<ProfileData | null>(null)
   const [assignedStore, setAssignedStore] = useState<Store | null>(null)
   const [todayRecord, setTodayRecord] = useState<AttendanceToday | null>(null)
-  const [scheduledStart, setScheduledStart] = useState<string>('08:40')
-  const [scheduledEnd, setScheduledEnd] = useState<string>('17:40')
+  const [scheduledStart, setScheduledStart] = useState<string>('09:40')
+  const [scheduledEnd, setScheduledEnd] = useState<string>('18:00')
 
   const [cameraActive, setCameraActive] = useState(false)
   const [capturedPhoto, setCapturedPhoto] = useState<string | null>(null)
@@ -100,21 +100,29 @@ export default function AttendancePage() {
         return
       }
 
-      // Fetch profile
+      // Fetch profile with assigned store
       const { data: profData } = await supabase
         .from('profiles')
         .select('id, full_name, email, role, store_id, stores(id, name)')
         .eq('id', session.user.id)
         .maybeSingle()
 
+      let storeName = ''
       if (profData && isMounted) {
         setProfile(profData as unknown as ProfileData)
-        if (profData.stores) {
-          setAssignedStore(profData.stores as unknown as Store)
+        
+        // Handle single object or array return from join
+        const resolvedStore = Array.isArray(profData.stores)
+          ? (profData.stores[0] as Store | undefined)
+          : (profData.stores as Store | null)
+
+        if (resolvedStore) {
+          setAssignedStore(resolvedStore)
+          storeName = resolvedStore.name?.toLowerCase() || ''
         }
       }
 
-      // Fetch today's schedule
+      // Fetch today's schedule from Supabase
       const today = new Date().toISOString().split('T')[0]
       const { data: schData } = await supabase
         .from('schedules')
@@ -123,9 +131,28 @@ export default function AttendancePage() {
         .eq('shift_date', today)
         .maybeSingle()
 
-      if (schData && isMounted) {
-        if (schData.shift_start) setScheduledStart(schData.shift_start.slice(0, 5))
-        if (schData.shift_end) setScheduledEnd(schData.shift_end.slice(0, 5))
+      if (schData && isMounted && schData.shift_start && schData.shift_end) {
+        setScheduledStart(schData.shift_start.slice(0, 5))
+        setScheduledEnd(schData.shift_end.slice(0, 5))
+      } else if (isMounted) {
+        // Automatic Shift Rule Detection
+        const isOffice = !storeName || storeName.includes('office') || storeName.includes('hq') || storeName.includes('headquarter')
+
+        if (isOffice) {
+          // Office: 09:00 - 17:00
+          setScheduledStart('09:00')
+          setScheduledEnd('17:00')
+        } else {
+          // Boutiques: Morning (09:40 - 18:00) vs Middle/Closing (11:40 - 20:00)
+          const nowHour = new Date().getHours()
+          if (nowHour >= 11) {
+            setScheduledStart('11:40')
+            setScheduledEnd('20:00')
+          } else {
+            setScheduledStart('09:40')
+            setScheduledEnd('18:00')
+          }
+        }
       }
 
       // Fetch today's attendance record
@@ -255,7 +282,7 @@ export default function AttendancePage() {
     }
   }
 
-  // Calculate punctuality relative to scheduled start (e.g. 08:40 + 5m grace = 08:45)
+  // Calculate punctuality relative to scheduled start (+ 5 min grace period)
   const computePunctuality = () => {
     const now = new Date()
     const currentHour = now.getHours()
@@ -273,7 +300,7 @@ export default function AttendancePage() {
     return { status: 'on_time', minutes: 0 }
   }
 
-  // Calculate overtime
+  // Calculate overtime relative to scheduled end
   const computeOvertime = () => {
     const now = new Date()
     const currentHour = now.getHours()
@@ -339,8 +366,8 @@ export default function AttendancePage() {
       setCapturedPhoto(null)
       alert(
         punctualityStatus === 'late'
-          ? `Clocked in successfully. Marked as LATE (${lateMinutes} mins).`
-          : 'Clocked in successfully. Status: ON-TIME.'
+          ? `Clocked in successfully. Marked as LATE (${lateMinutes} mins). Shift start was ${scheduledStart}.`
+          : `Clocked in successfully. Status: ON-TIME (${scheduledStart} Shift).`
       )
     }
   }
