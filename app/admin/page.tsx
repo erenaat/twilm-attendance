@@ -466,91 +466,216 @@ export default function AdminPage() {
     return allStaffList.filter((s) => s.store_id === selectedStoreFilter)
   }, [allStaffList, selectedStoreFilter])
 
-  // Export Organized & Payroll-Ready Spreadsheet
-  const exportToCSV = () => {
+  // Helper untuk membersihkan karakter XML
+  const escapeXml = (str: string | number | null | undefined) => {
+    if (str === null || str === undefined) return ''
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&apos;')
+  }
+
+  // Export File Excel (.xls) dengan Styling Header, Border, dan Ukuran Kolom Terstruktur
+  const exportToExcelSheet = () => {
     if (filteredAttendance.length === 0) {
-      alert('No attendance data to export for this selection.')
+      alert('Tidak ada data absensi untuk diekspor.')
       return
     }
 
-    const headers = [
-      'Date',
-      'Employee Code',
-      'Staff Name',
-      'Email',
-      'Store Branch',
-      'Clock In',
-      'Punctuality',
-      'Late (Mins)',
-      'Clock Out',
-      'Overtime (Mins)',
-      'Total Hours Worked',
-      'Closing Cash Drawer',
-      'Shift Handover Notes',
-      'Status',
+    const branchName =
+      selectedStoreFilter === 'all'
+        ? 'All Stores & Office'
+        : stores.find((s) => s.id === selectedStoreFilter)?.name || 'Store'
+
+    const todayStr = new Date().toISOString().split('T')[0]
+
+    // Definisi kolom dan lebar pikselnya
+    const columns = [
+      { header: 'Date', width: 90 },
+      { header: 'Employee ID', width: 95 },
+      { header: 'Staff Name', width: 140 },
+      { header: 'Email', width: 160 },
+      { header: 'Boutique Store', width: 120 },
+      { header: 'Clock In', width: 75 },
+      { header: 'Punctuality', width: 100 },
+      { header: 'Late (Mins)', width: 80 },
+      { header: 'Clock Out', width: 75 },
+      { header: 'OT (Mins)', width: 80 },
+      { header: 'Hours Worked', width: 90 },
+      { header: 'Closing Cash', width: 110 },
+      { header: 'Shift Handover Logbook', width: 250 },
+      { header: 'Status', width: 85 },
     ]
 
-    const rows = filteredAttendance.map((r) => {
-      // Clean time strings
-      const clockIn = r.clock_in_at
-        ? new Date(r.clock_in_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-        : '--:--'
-      const clockOut = r.clock_out_at
-        ? new Date(r.clock_out_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-        : '--:--'
+    // Generate Rows Data
+    const dataRowsXml = filteredAttendance
+      .map((r, index) => {
+        const rowStyle = index % 2 === 0 ? 'DataRowEven' : 'DataRowOdd'
 
-      // Calculate numeric hours worked for easy Excel formulas
-      let hoursWorked = '0.00'
-      if (r.clock_in_at && r.clock_out_at) {
-        const diffMs = new Date(r.clock_out_at).getTime() - new Date(r.clock_in_at).getTime()
-        const totalHrs = Math.max(0, diffMs / (1000 * 60 * 60))
-        hoursWorked = totalHrs.toFixed(2)
-      }
+        const clockIn = r.clock_in_at
+          ? new Date(r.clock_in_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+          : '--:--'
+        const clockOut = r.clock_out_at
+          ? new Date(r.clock_out_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+          : '--:--'
 
-      // Clean notes to avoid breaking CSV rows
-      const cleanHandover = (r.handover_notes || '')
-        .replace(/(\r\n|\n|\r)/gm, ' ')
-        .replace(/"/g, '""')
-        .trim()
-      const cleanCash = (r.cash_drawer_balance || '')
-        .replace(/(\r\n|\n|\r)/gm, ' ')
-        .replace(/"/g, '""')
-        .trim()
+        let hoursWorked = 0
+        if (r.clock_in_at && r.clock_out_at) {
+          const diffMs = new Date(r.clock_out_at).getTime() - new Date(r.clock_in_at).getTime()
+          hoursWorked = parseFloat(Math.max(0, diffMs / (1000 * 60 * 60)).toFixed(2))
+        }
 
-      return [
-        `"${r.work_date}"`,
-        `"${r.profiles?.employee_code || '-'}"`,
-        `"${r.profiles?.full_name || 'Staff'}"`,
-        `"${r.profiles?.email || ''}"`,
-        `"${r.stores?.name || 'Office'}"`,
-        `"${clockIn}"`,
-        `"${r.punctuality_status === 'late' ? 'LATE' : r.clock_in_at ? 'ON-TIME' : '-'}"`,
-        `"${r.late_minutes || 0}"`,
-        `"${clockOut}"`,
-        `"${r.overtime_minutes || 0}"`,
-        `"${hoursWorked}"`,
-        `"${cleanCash || '-'}"`,
-        `"${cleanHandover || '-'}"`,
-        `"${r.clock_out_at ? 'COMPLETED' : r.status.toUpperCase()}"`,
-      ]
-    })
+        const punctualityText =
+          r.punctuality_status === 'late'
+            ? `LATE (${r.late_minutes || 0}m)`
+            : r.clock_in_at
+            ? 'ON-TIME'
+            : '-'
+        const punctualityStyle =
+          r.punctuality_status === 'late' ? 'LateStatus' : r.clock_in_at ? 'OnTimeStatus' : rowStyle
 
-    // Prepend UTF-8 BOM (\uFEFF) so Excel respects formatting, accents & columns
-    const csvContent =
-      '\uFEFF' + [headers.join(','), ...rows.map((row) => row.join(','))].join('\r\n')
+        const cleanNotes = (r.handover_notes || '-').replace(/(\r\n|\n|\r)/gm, ' ')
+        const cleanCash = (r.cash_drawer_balance || '-').replace(/(\r\n|\n|\r)/gm, ' ')
+        const statusText = r.clock_out_at ? 'COMPLETED' : r.status.toUpperCase()
 
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
+        return `
+      <Row ss:Height="22">
+        <Cell ss:StyleID="${rowStyle}"><Data ss:Type="String">${escapeXml(r.work_date)}</Data></Cell>
+        <Cell ss:StyleID="${rowStyle}"><Data ss:Type="String">${escapeXml(r.profiles?.employee_code || '-')}</Data></Cell>
+        <Cell ss:StyleID="${rowStyle}"><Data ss:Type="String">${escapeXml(r.profiles?.full_name || 'Staff')}</Data></Cell>
+        <Cell ss:StyleID="${rowStyle}"><Data ss:Type="String">${escapeXml(r.profiles?.email || '-')}</Data></Cell>
+        <Cell ss:StyleID="${rowStyle}"><Data ss:Type="String">${escapeXml(r.stores?.name || 'Office')}</Data></Cell>
+        <Cell ss:StyleID="${rowStyle}"><Data ss:Type="String">${escapeXml(clockIn)}</Data></Cell>
+        <Cell ss:StyleID="${punctualityStyle}"><Data ss:Type="String">${escapeXml(punctualityText)}</Data></Cell>
+        <Cell ss:StyleID="${rowStyle}"><Data ss:Type="Number">${r.late_minutes || 0}</Data></Cell>
+        <Cell ss:StyleID="${rowStyle}"><Data ss:Type="String">${escapeXml(clockOut)}</Data></Cell>
+        <Cell ss:StyleID="${rowStyle}"><Data ss:Type="Number">${r.overtime_minutes || 0}</Data></Cell>
+        <Cell ss:StyleID="${rowStyle}"><Data ss:Type="Number">${hoursWorked}</Data></Cell>
+        <Cell ss:StyleID="${rowStyle}"><Data ss:Type="String">${escapeXml(cleanCash)}</Data></Cell>
+        <Cell ss:StyleID="${rowStyle}"><Data ss:Type="String">${escapeXml(cleanNotes)}</Data></Cell>
+        <Cell ss:StyleID="${rowStyle}"><Data ss:Type="String">${escapeXml(statusText)}</Data></Cell>
+      </Row>`
+      })
+      .join('')
+
+    // Dokumen Excel Spreadsheet XML
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<?mso-application progid="Excel.Sheet"?>
+<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"
+ xmlns:o="urn:schemas-microsoft-com:office:office"
+ xmlns:x="urn:schemas-microsoft-com:office:excel"
+ xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet"
+ xmlns:html="http://www.w3.org/TR/REC-html40">
+ <Styles>
+  <Style ss:ID="Default" ss:Name="Normal">
+   <Alignment ss:Vertical="Center"/>
+   <Font ss:FontName="Segoe UI" ss:Size="10" ss:Color="#171716"/>
+  </Style>
+  <!-- Judul Laporan -->
+  <Style ss:ID="TitleReport">
+   <Font ss:FontName="Segoe UI" ss:Size="14" ss:Bold="1" ss:Color="#171716"/>
+   <Alignment ss:Vertical="Center"/>
+  </Style>
+  <!-- Sub-info Laporan -->
+  <Style ss:ID="SubTitle">
+   <Font ss:FontName="Segoe UI" ss:Size="9" ss:Color="#73726C"/>
+   <Alignment ss:Vertical="Center"/>
+  </Style>
+  <!-- Header Kolom Tabel -->
+  <Style ss:ID="TableHeader">
+   <Alignment ss:Horizontal="Center" ss:Vertical="Center" ss:WrapText="1"/>
+   <Borders>
+    <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#000000"/>
+    <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#000000"/>
+    <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#333333"/>
+    <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#333333"/>
+   </Borders>
+   <Font ss:FontName="Segoe UI" ss:Size="9.5" ss:Bold="1" ss:Color="#FFFFFF"/>
+   <Interior ss:Color="#171716" ss:Pattern="Solid"/>
+  </Style>
+  <!-- Baris Data Genap -->
+  <Style ss:ID="DataRowEven">
+   <Alignment ss:Vertical="Center"/>
+   <Borders>
+    <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#EAEAE5"/>
+    <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#EAEAE5"/>
+    <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#EAEAE5"/>
+   </Borders>
+   <Font ss:FontName="Segoe UI" ss:Size="9.5" ss:Color="#171716"/>
+   <Interior ss:Color="#FFFFFF" ss:Pattern="Solid"/>
+  </Style>
+  <!-- Baris Data Ganjil (Zebra) -->
+  <Style ss:ID="DataRowOdd">
+   <Alignment ss:Vertical="Center"/>
+   <Borders>
+    <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#EAEAE5"/>
+    <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#EAEAE5"/>
+    <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#EAEAE5"/>
+   </Borders>
+   <Font ss:FontName="Segoe UI" ss:Size="9.5" ss:Color="#171716"/>
+   <Interior ss:Color="#FBFBF9" ss:Pattern="Solid"/>
+  </Style>
+  <!-- Status On-Time (Hijau Lembut) -->
+  <Style ss:ID="OnTimeStatus">
+   <Alignment ss:Horizontal="Center" ss:Vertical="Center"/>
+   <Borders>
+    <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#EAEAE5"/>
+    <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#EAEAE5"/>
+    <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#EAEAE5"/>
+   </Borders>
+   <Font ss:FontName="Segoe UI" ss:Size="9" ss:Bold="1" ss:Color="#065F46"/>
+   <Interior ss:Color="#ECFDF5" ss:Pattern="Solid"/>
+  </Style>
+  <!-- Status Late (Merah Lembut) -->
+  <Style ss:ID="LateStatus">
+   <Alignment ss:Horizontal="Center" ss:Vertical="Center"/>
+   <Borders>
+    <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#EAEAE5"/>
+    <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#EAEAE5"/>
+    <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#EAEAE5"/>
+   </Borders>
+   <Font ss:FontName="Segoe UI" ss:Size="9" ss:Bold="1" ss:Color="#991B1B"/>
+   <Interior ss:Color="#FEF2F2" ss:Pattern="Solid"/>
+  </Style>
+ </Styles>
+ <Worksheet ss:Name="Attendance Report">
+  <Table>
+   ${columns.map((c) => `<Column ss:Width="${c.width}"/>`).join('\n   ')}
+   <Row ss:Height="24">
+    <Cell ss:StyleID="TitleReport"><Data ss:Type="String">TWILM — STORE ATTENDANCE &amp; PAYROLL LOGBOOK</Data></Cell>
+   </Row>
+   <Row ss:Height="18">
+    <Cell ss:StyleID="SubTitle"><Data ss:Type="String">Branch Scope: ${escapeXml(branchName)} | Exported on: ${escapeXml(todayStr)} | Records: ${filteredAttendance.length}</Data></Cell>
+   </Row>
+   <Row ss:Height="10"/>
+   <Row ss:Height="26">
+    ${columns.map((c) => `<Cell ss:StyleID="TableHeader"><Data ss:Type="String">${escapeXml(c.header)}</Data></Cell>`).join('\n    ')}
+   </Row>
+   ${dataRowsXml}
+  </Table>
+  <WorksheetOptions xmlns="urn:schemas-microsoft-com:office:excel">
+   <FreezePanes/>
+   <FrozenNoSplit/>
+   <SplitHorizontal>4</SplitHorizontal>
+   <TopRowBottomPane>4</TopRowBottomPane>
+   <ActivePane>2</ActivePane>
+  </WorksheetOptions>
+ </Worksheet>
+</Workbook>`
+
+    const blob = new Blob([xml], { type: 'application/vnd.ms-excel;charset=utf-8;' })
     const url = URL.createObjectURL(blob)
     const link = document.createElement('a')
     link.href = url
 
-    const branchName =
+    const fileBranch =
       selectedStoreFilter === 'all'
         ? 'ALL_STORES'
         : stores.find((s) => s.id === selectedStoreFilter)?.name.replace(/\s+/g, '_') || 'STORE'
 
-    const todayStr = new Date().toISOString().split('T')[0]
-    link.setAttribute('download', `TWILM_Attendance_${branchName}_${todayStr}.csv`)
+    link.setAttribute('download', `TWILM_Attendance_${fileBranch}_${todayStr}.xls`)
     document.body.appendChild(link)
     link.click()
     document.body.removeChild(link)
@@ -595,10 +720,10 @@ export default function AdminPage() {
             </div>
 
             <button
-              onClick={exportToCSV}
+              onClick={exportToExcelSheet}
               className="px-3.5 py-1.5 bg-white border border-[#eaeae5] text-[11px] uppercase tracking-wider hover:bg-neutral-50 transition"
             >
-              Export Sheet
+              Export Excel Sheet
             </button>
             <button
               onClick={fetchAllAdminData}
