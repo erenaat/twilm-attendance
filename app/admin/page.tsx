@@ -16,7 +16,10 @@ interface ProfileSummary {
   stores?: {
     id: string
     name: string
-  } | null
+  } | {
+    id: string
+    name: string
+  }[] | null
 }
 
 interface StoreSummary {
@@ -124,10 +127,10 @@ export default function AdminPage() {
   // Roster form fields
   const [newRosterUser, setNewRosterUser] = useState('')
   const [newRosterDate, setNewRosterDate] = useState('')
-  const [newRosterStart, setNewRosterStart] = useState('08:40')
-  const [newRosterEnd, setNewRosterEnd] = useState('17:40')
+  const [newRosterStart, setNewRosterStart] = useState('09:00')
+  const [newRosterEnd, setNewRosterEnd] = useState('17:00')
   const [newRosterIsOff, setNewRosterIsOff] = useState(false)
-  const [newRosterNotes, setNewRosterNotes] = useState('')
+  const [newRosterNotes, setNewRosterNotes] = useState('Office Shift (09:00 - 17:00)')
 
   // Task form fields
   const [newTaskTitle, setNewTaskTitle] = useState('')
@@ -146,12 +149,15 @@ export default function AdminPage() {
   const [editStoreId, setEditStoreId] = useState<string>('')
   const [savingStaff, setSavingStaff] = useState(false)
 
+  const resolveStoreName = (s: ProfileSummary['stores']) => {
+    if (!s) return ''
+    return Array.isArray(s) ? s[0]?.name || '' : s.name || ''
+  }
+
   const fetchAllAdminData = useCallback(async () => {
-    // 1. Fetch Stores
     const { data: storeData } = await supabase.from('stores').select('id, name').order('name')
     if (storeData) setStores(storeData)
 
-    // 2. Fetch Profiles
     const { data: staffData } = await supabase
       .from('profiles')
       .select('id, full_name, email, role, employee_code, store_id, stores(id, name)')
@@ -161,7 +167,6 @@ export default function AdminPage() {
       setNewRosterUser((prev) => prev || (staffData.length > 0 ? staffData[0].id : ''))
     }
 
-    // 3. Fetch Attendance
     const { data: attData } = await supabase
       .from('attendance')
       .select('*, profiles(id, full_name, email, store_id), stores(id, name)')
@@ -169,14 +174,12 @@ export default function AdminPage() {
       .limit(100)
     if (attData) setRecords(attData as unknown as AttendanceRecord[])
 
-    // 4. Fetch Leave
     const { data: lData } = await supabase
       .from('leave_requests')
       .select('*, profiles(id, full_name, email, store_id)')
       .order('created_at', { ascending: false })
     if (lData) setLeaveRequests(lData as unknown as LeaveRequestItem[])
 
-    // 5. Fetch Schedules
     const { data: schData } = await supabase
       .from('schedules')
       .select('*, profiles(id, full_name, email, store_id), stores(id, name)')
@@ -184,14 +187,12 @@ export default function AdminPage() {
       .limit(60)
     if (schData) setSchedules(schData as unknown as ScheduleItem[])
 
-    // 6. Fetch Tasks
     const { data: tskData } = await supabase
       .from('tasks')
       .select('*, stores(id, name)')
       .order('created_at', { ascending: false })
     if (tskData) setTasks(tskData as unknown as TaskItem[])
 
-    // 7. Fetch News
     const { data: newsData } = await supabase
       .from('announcements')
       .select('*, stores(id, name)')
@@ -241,6 +242,52 @@ export default function AdminPage() {
     }
   }, [router, fetchAllAdminData])
 
+  // Automatically adjust shift times based on staff member's store
+  const handleSelectStaffForRoster = useCallback((userId: string) => {
+    setNewRosterUser(userId)
+    const selectedStaff = allStaffList.find((s) => s.id === userId)
+    const storeName = resolveStoreName(selectedStaff?.stores).toLowerCase()
+    const isOffice = !storeName || storeName.includes('office') || storeName.includes('hq') || storeName.includes('headquarter')
+
+    if (isOffice) {
+      setNewRosterStart('09:00')
+      setNewRosterEnd('17:00')
+      setNewRosterNotes('Office Shift (09:00 - 17:00)')
+    } else {
+      setNewRosterStart('09:40')
+      setNewRosterEnd('18:00')
+      setNewRosterNotes('Morning Shift (09:40 - 18:00)')
+    }
+  }, [allStaffList])
+
+  const openRosterForm = () => {
+    const defaultUserId = newRosterUser || (allStaffList.length > 0 ? allStaffList[0].id : '')
+    if (defaultUserId) {
+      handleSelectStaffForRoster(defaultUserId)
+    }
+    setShowRosterForm(!showRosterForm)
+  }
+
+  // Quick Shift Preset Switcher
+  const applyShiftPreset = (type: 'office' | 'morning' | 'closing') => {
+    if (type === 'office') {
+      setNewRosterStart('09:00')
+      setNewRosterEnd('17:00')
+      setNewRosterNotes('Office Shift (09:00 - 17:00)')
+      setNewRosterIsOff(false)
+    } else if (type === 'morning') {
+      setNewRosterStart('09:40')
+      setNewRosterEnd('18:00')
+      setNewRosterNotes('Morning Shift (09:40 - 18:00)')
+      setNewRosterIsOff(false)
+    } else if (type === 'closing') {
+      setNewRosterStart('11:40')
+      setNewRosterEnd('20:00')
+      setNewRosterNotes('Middle/Closing Shift (11:40 - 20:00)')
+      setNewRosterIsOff(false)
+    }
+  }
+
   // Leave Actions
   const handleLeaveDecision = async (id: string, decision: 'approved' | 'rejected') => {
     const { error } = await supabase
@@ -265,10 +312,11 @@ export default function AdminPage() {
       return
     }
 
+    const assignedStaff = allStaffList.find((s) => s.id === newRosterUser)
     const assignedStoreId =
       selectedStoreFilter !== 'all'
         ? selectedStoreFilter
-        : currentAdminProfile?.store_id || stores[0]?.id || null
+        : assignedStaff?.store_id || currentAdminProfile?.store_id || stores[0]?.id || null
 
     const { data, error } = await supabase
       .from('schedules')
@@ -295,7 +343,6 @@ export default function AdminPage() {
         ...prev.filter((s) => s.id !== data.id),
       ])
       setShowRosterForm(false)
-      setNewRosterNotes('')
       alert('Shift assigned successfully.')
     }
   }
@@ -477,7 +524,7 @@ export default function AdminPage() {
       .replace(/'/g, '&apos;')
   }
 
-  // Export File Excel (.xls) dengan Styling Header, Border, dan Ukuran Kolom Terstruktur
+  // Export File Excel (.xls)
   const exportToExcelSheet = () => {
     if (filteredAttendance.length === 0) {
       alert('Tidak ada data absensi untuk diekspor.')
@@ -491,7 +538,6 @@ export default function AdminPage() {
 
     const todayStr = new Date().toISOString().split('T')[0]
 
-    // Definisi kolom dan lebar pikselnya
     const columns = [
       { header: 'Date', width: 90 },
       { header: 'Employee ID', width: 95 },
@@ -509,7 +555,6 @@ export default function AdminPage() {
       { header: 'Status', width: 85 },
     ]
 
-    // Generate Rows Data
     const dataRowsXml = filteredAttendance
       .map((r, index) => {
         const rowStyle = index % 2 === 0 ? 'DataRowEven' : 'DataRowOdd'
@@ -560,7 +605,6 @@ export default function AdminPage() {
       })
       .join('')
 
-    // Dokumen Excel Spreadsheet XML
     const xml = `<?xml version="1.0" encoding="UTF-8"?>
 <?mso-application progid="Excel.Sheet"?>
 <Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"
@@ -573,17 +617,14 @@ export default function AdminPage() {
    <Alignment ss:Vertical="Center"/>
    <Font ss:FontName="Segoe UI" ss:Size="10" ss:Color="#171716"/>
   </Style>
-  <!-- Judul Laporan -->
   <Style ss:ID="TitleReport">
    <Font ss:FontName="Segoe UI" ss:Size="14" ss:Bold="1" ss:Color="#171716"/>
    <Alignment ss:Vertical="Center"/>
   </Style>
-  <!-- Sub-info Laporan -->
   <Style ss:ID="SubTitle">
    <Font ss:FontName="Segoe UI" ss:Size="9" ss:Color="#73726C"/>
    <Alignment ss:Vertical="Center"/>
   </Style>
-  <!-- Header Kolom Tabel -->
   <Style ss:ID="TableHeader">
    <Alignment ss:Horizontal="Center" ss:Vertical="Center" ss:WrapText="1"/>
    <Borders>
@@ -595,7 +636,6 @@ export default function AdminPage() {
    <Font ss:FontName="Segoe UI" ss:Size="9.5" ss:Bold="1" ss:Color="#FFFFFF"/>
    <Interior ss:Color="#171716" ss:Pattern="Solid"/>
   </Style>
-  <!-- Baris Data Genap -->
   <Style ss:ID="DataRowEven">
    <Alignment ss:Vertical="Center"/>
    <Borders>
@@ -606,7 +646,6 @@ export default function AdminPage() {
    <Font ss:FontName="Segoe UI" ss:Size="9.5" ss:Color="#171716"/>
    <Interior ss:Color="#FFFFFF" ss:Pattern="Solid"/>
   </Style>
-  <!-- Baris Data Ganjil (Zebra) -->
   <Style ss:ID="DataRowOdd">
    <Alignment ss:Vertical="Center"/>
    <Borders>
@@ -617,7 +656,6 @@ export default function AdminPage() {
    <Font ss:FontName="Segoe UI" ss:Size="9.5" ss:Color="#171716"/>
    <Interior ss:Color="#FBFBF9" ss:Pattern="Solid"/>
   </Style>
-  <!-- Status On-Time (Hijau Lembut) -->
   <Style ss:ID="OnTimeStatus">
    <Alignment ss:Horizontal="Center" ss:Vertical="Center"/>
    <Borders>
@@ -628,7 +666,6 @@ export default function AdminPage() {
    <Font ss:FontName="Segoe UI" ss:Size="9" ss:Bold="1" ss:Color="#065F46"/>
    <Interior ss:Color="#ECFDF5" ss:Pattern="Solid"/>
   </Style>
-  <!-- Status Late (Merah Lembut) -->
   <Style ss:ID="LateStatus">
    <Alignment ss:Horizontal="Center" ss:Vertical="Center"/>
    <Borders>
@@ -923,7 +960,7 @@ export default function AdminPage() {
           </div>
         )}
 
-        {/* TAB 2: TEAM / STAFF DIRECTORY (EDITABLE) */}
+        {/* TAB 2: TEAM / STAFF DIRECTORY */}
         {activeTab === 'team' && (
           <div className="bg-white border border-[#eaeae5] overflow-hidden">
             <div className="p-4 border-b border-[#eaeae5] bg-[#fbfbf9]/60 flex justify-between items-center">
@@ -1007,7 +1044,7 @@ export default function AdminPage() {
                               </select>
                             ) : (
                               <span className="text-[10px] tracking-wider uppercase px-2 py-0.5 bg-neutral-100 border border-[#eaeae5] font-mono">
-                                {member.stores?.name || 'Office / Unassigned'}
+                                {resolveStoreName(member.stores) || 'Office / Unassigned'}
                               </span>
                             )}
                           </td>
@@ -1145,11 +1182,11 @@ export default function AdminPage() {
                   Store Roster Schedule
                 </span>
                 <p className="text-[11px] text-[#73726c]">
-                  Assign shifts, day-offs, and store locations for staff.
+                  Office: 09:00 — 17:00 | Stores: Morning (09:40 — 18:00) / Middle (11:40 — 20:00)
                 </p>
               </div>
               <button
-                onClick={() => setShowRosterForm(!showRosterForm)}
+                onClick={openRosterForm}
                 className="px-3.5 py-1.5 bg-[#171716] text-white text-xs uppercase tracking-wider hover:bg-neutral-800 transition"
               >
                 {showRosterForm ? 'Close' : '+ Add Shift'}
@@ -1161,6 +1198,34 @@ export default function AdminPage() {
                 onSubmit={handleCreateRoster}
                 className="bg-white border border-[#eaeae5] p-5 space-y-4"
               >
+                {/* 1-Click Shift Presets */}
+                <div className="flex flex-wrap items-center gap-2 pb-2 border-b border-[#eaeae5]">
+                  <span className="text-[10px] uppercase tracking-wider text-[#73726c] mr-1">
+                    Quick Preset:
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => applyShiftPreset('office')}
+                    className="px-2.5 py-1 text-[11px] border border-[#eaeae5] bg-neutral-50 hover:bg-black hover:text-white transition"
+                  >
+                    Office (09:00 — 17:00)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => applyShiftPreset('morning')}
+                    className="px-2.5 py-1 text-[11px] border border-[#eaeae5] bg-neutral-50 hover:bg-black hover:text-white transition"
+                  >
+                    Boutique Morning (09:40 — 18:00)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => applyShiftPreset('closing')}
+                    className="px-2.5 py-1 text-[11px] border border-[#eaeae5] bg-neutral-50 hover:bg-black hover:text-white transition"
+                  >
+                    Boutique Middle/Closing (11:40 — 20:00)
+                  </button>
+                </div>
+
                 <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
                   <div>
                     <label className="text-[10px] uppercase text-[#73726c] block mb-1">
@@ -1168,12 +1233,12 @@ export default function AdminPage() {
                     </label>
                     <select
                       value={newRosterUser}
-                      onChange={(e) => setNewRosterUser(e.target.value)}
+                      onChange={(e) => handleSelectStaffForRoster(e.target.value)}
                       className="w-full p-2 text-xs border border-[#eaeae5] bg-[#fbfbf9]"
                     >
                       {allStaffList.map((s) => (
                         <option key={s.id} value={s.id}>
-                          {s.full_name || s.email}
+                          {s.full_name || s.email} ({resolveStoreName(s.stores) || 'Office'})
                         </option>
                       ))}
                     </select>
@@ -1219,28 +1284,30 @@ export default function AdminPage() {
                   </div>
                 </div>
 
-                <div className="flex items-center space-x-6 text-xs">
-                  <label className="flex items-center space-x-2 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={newRosterIsOff}
-                      onChange={(e) => setNewRosterIsOff(e.target.checked)}
-                      className="accent-black"
-                    />
-                    <span>Mark as Day Off / Rest</span>
-                  </label>
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+                  <div className="flex items-center space-x-4 flex-1">
+                    <label className="flex items-center space-x-2 cursor-pointer whitespace-nowrap">
+                      <input
+                        type="checkbox"
+                        checked={newRosterIsOff}
+                        onChange={(e) => setNewRosterIsOff(e.target.checked)}
+                        className="accent-black"
+                      />
+                      <span>Mark as Day Off / Rest</span>
+                    </label>
 
-                  <input
-                    type="text"
-                    value={newRosterNotes}
-                    onChange={(e) => setNewRosterNotes(e.target.value)}
-                    placeholder="Notes (optional, e.g. Opening Shift)"
-                    className="flex-1 p-2 text-xs border border-[#eaeae5] bg-[#fbfbf9]"
-                  />
+                    <input
+                      type="text"
+                      value={newRosterNotes}
+                      onChange={(e) => setNewRosterNotes(e.target.value)}
+                      placeholder="Notes (e.g. Office Shift)"
+                      className="flex-1 p-2 text-xs border border-[#eaeae5] bg-[#fbfbf9]"
+                    />
+                  </div>
 
                   <button
                     type="submit"
-                    className="px-4 py-2 bg-black text-white text-xs uppercase tracking-widest"
+                    className="px-5 py-2 bg-black text-white text-xs uppercase tracking-widest whitespace-nowrap hover:bg-neutral-800 transition"
                   >
                     Save Shift
                   </button>

@@ -12,7 +12,9 @@ interface ProfileData {
   store_id: string | null
   stores?: {
     name: string
-  } | null
+  } | {
+    name: string
+  }[] | null
 }
 
 interface AttendanceRecord {
@@ -31,6 +33,7 @@ export default function DashboardPage() {
   const [currentTime, setCurrentTime] = useState<string>('')
   const [currentDate, setCurrentDate] = useState<string>('')
   const [greetingTime, setGreetingTime] = useState<string>('MORNING')
+  const [scheduledDisplay, setScheduledDisplay] = useState<string>('09:00 — 17:00')
 
   useEffect(() => {
     const updateClock = () => {
@@ -88,11 +91,18 @@ export default function DashboardPage() {
         .eq('id', session.user.id)
         .maybeSingle()
 
+      let storeName = ''
       if (profData && isMounted) {
         setProfile(profData as unknown as ProfileData)
+        const resolvedStore = Array.isArray(profData.stores)
+          ? profData.stores[0]
+          : profData.stores
+        storeName = resolvedStore?.name?.toLowerCase() || ''
       }
 
       const today = new Date().toISOString().split('T')[0]
+
+      // Fetch attendance
       const { data: attData } = await supabase
         .from('attendance')
         .select('id, work_date, clock_in_at, clock_out_at, status')
@@ -104,6 +114,35 @@ export default function DashboardPage() {
         setTodayRecord(attData)
       }
 
+      // Fetch today's schedule from Supabase or calculate automatic store schedule
+      const { data: schData } = await supabase
+        .from('schedules')
+        .select('shift_start, shift_end, is_day_off')
+        .eq('user_id', session.user.id)
+        .eq('shift_date', today)
+        .maybeSingle()
+
+      if (schData && isMounted) {
+        if (schData.is_day_off) {
+          setScheduledDisplay('DAY OFF')
+        } else if (schData.shift_start && schData.shift_end) {
+          setScheduledDisplay(`${schData.shift_start.slice(0, 5)} — ${schData.shift_end.slice(0, 5)}`)
+        }
+      } else if (isMounted) {
+        const isOffice = !storeName || storeName.includes('office') || storeName.includes('hq') || storeName.includes('headquarter')
+        if (isOffice) {
+          setScheduledDisplay('09:00 — 17:00')
+        } else {
+          const nowHour = new Date().getHours()
+          if (nowHour >= 11) {
+            setScheduledDisplay('11:40 — 20:00')
+          } else {
+            setScheduledDisplay('09:40 — 18:00')
+          }
+        }
+      }
+
+      // Fetch pending tasks
       const { count: taskCount } = await supabase
         .from('tasks')
         .select('*', { count: 'exact', head: true })
@@ -122,7 +161,6 @@ export default function DashboardPage() {
     }
   }, [router])
 
-  // Pure derived state — no effect or setState required
   const shiftDuration = (() => {
     if (!todayRecord?.clock_in_at) return '0h 0m'
     const start = new Date(todayRecord.clock_in_at).getTime()
@@ -144,6 +182,11 @@ export default function DashboardPage() {
       minute: '2-digit',
     })
   }
+
+  const resolvedStoreName = (() => {
+    if (!profile?.stores) return 'Office / Unassigned'
+    return Array.isArray(profile.stores) ? profile.stores[0]?.name : profile.stores.name
+  })()
 
   const displayName = profile?.full_name?.split(' ')[0] || 'TEAM'
 
@@ -199,7 +242,7 @@ export default function DashboardPage() {
                 />
               </div>
               <span className="text-xs text-[#73726c] mt-0.5 block">
-                Location: {profile?.stores?.name || 'Office / Unassigned'}
+                Location: {resolvedStoreName}
               </span>
             </div>
 
@@ -248,7 +291,7 @@ export default function DashboardPage() {
                 SCHEDULE
               </span>
               <span className="text-sm sm:text-base font-mono font-light mt-1 block">
-                08:40 — 17:40
+                {scheduledDisplay}
               </span>
             </div>
           </div>
