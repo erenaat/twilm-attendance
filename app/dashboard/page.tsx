@@ -1,118 +1,84 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import Image from 'next/image'
+import Link from 'next/link'
 import { supabase } from '../lib/supabase'
 import StaffNav from '../components/StaffNav'
 
-interface Store {
-  id: string
-  name: string
-}
-
 interface ProfileData {
-  id: string
   full_name: string | null
-  email: string | null
   role: string
   employee_code?: string | null
   store_id: string | null
-  stores?: Store | Store[] | null
+  stores?: {
+    name: string
+  } | {
+    name: string
+  }[] | null
 }
 
 interface AttendanceRecord {
   id: string
   work_date: string
   clock_in_at: string | null
-  clock_in_lat: number | null
-  clock_in_lng: number | null
-  clock_in_address: string | null
-  clock_in_photo_url: string | null
   clock_out_at: string | null
-  clock_out_lat: number | null
-  clock_out_lng: number | null
-  clock_out_address: string | null
-  clock_out_photo_url: string | null
-  status: string
   punctuality_status?: string | null
-  late_minutes?: number | null
-  overtime_minutes?: number | null
-  handover_notes?: string | null
-  cash_drawer_balance?: string | null
+  status: string
 }
 
-export default function AttendancePage() {
+export default function DashboardPage() {
   const router = useRouter()
-  const videoRef = useRef<HTMLVideoElement | null>(null)
-  const canvasRef = useRef<HTMLCanvasElement | null>(null)
-
   const [profile, setProfile] = useState<ProfileData | null>(null)
-  const [assignedStore, setAssignedStore] = useState<Store | null>(null)
   const [todayRecord, setTodayRecord] = useState<AttendanceRecord | null>(null)
-  const [historyRecords, setHistoryRecords] = useState<AttendanceRecord[]>([])
-  const [scheduledStart, setScheduledStart] = useState<string>('09:40')
-  const [scheduledEnd, setScheduledEnd] = useState<string>('18:00')
-  const [currentTimeStr, setCurrentTimeStr] = useState<string>('')
+  const [pendingTaskCount, setPendingTaskCount] = useState<number>(0)
+  const [currentTime, setCurrentTime] = useState<string>('')
+  const [currentDate, setCurrentDate] = useState<string>('')
+  const [greetingTime, setGreetingTime] = useState<string>('MORNING')
+  const [scheduledDisplay, setScheduledDisplay] = useState<string>('09:00 — 17:00')
+  const [punctualityRate, setPunctualityRate] = useState<number>(100)
 
-  const [cameraActive, setCameraActive] = useState(false)
-  const [capturedPhoto, setCapturedPhoto] = useState<string | null>(null)
-  const [currentCoords, setCurrentCoords] = useState<{ lat: number; lng: number; accuracy: number } | null>(null)
-  const [detectedAddress, setDetectedAddress] = useState<string>('')
-  const [detectingLocation, setDetectingLocation] = useState<boolean>(false)
-
-  // Handover Modal State
-  const [showHandoverModal, setShowHandoverModal] = useState(false)
-  const [handoverNote, setHandoverNote] = useState('')
-  const [cashBalance, setCashBalance] = useState('')
-
-  const [loading, setLoading] = useState(true)
-  const [submitting, setSubmitting] = useState(false)
-  const [statusMessage, setStatusMessage] = useState<string>('')
-
-  // Live Bali Time ticker
   useEffect(() => {
-    const updateTime = () => {
+    const updateClock = () => {
       const now = new Date()
-      setCurrentTimeStr(
-        new Intl.DateTimeFormat('en-GB', {
-          timeZone: 'Asia/Makassar',
-          hour: '2-digit',
-          minute: '2-digit',
-          second: '2-digit',
-          hour12: false,
-        }).format(now)
-      )
-    }
-    updateTime()
-    const interval = setInterval(updateTime, 1000)
-    return () => clearInterval(interval)
-  }, [])
+      const timeStr = new Intl.DateTimeFormat('en-GB', {
+        timeZone: 'Asia/Makassar',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false,
+      }).format(now)
 
-  // Convert Coordinates to Address
-  const fetchAddressFromCoords = async (lat: number, lng: number): Promise<string> => {
-    try {
-      const response = await fetch(
-        `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18&addressdetails=1`,
-        {
-          headers: {
-            'Accept-Language': 'en,id',
-            'User-Agent': 'TWILM-Staff-OS',
-          },
-        }
-      )
-      if (!response.ok) return `${lat.toFixed(6)}, ${lng.toFixed(6)}`
-      const data = await response.json()
-      return data?.display_name || `${lat.toFixed(6)}, ${lng.toFixed(6)}`
-    } catch {
-      return `${lat.toFixed(6)}, ${lng.toFixed(6)}`
+      const dateStr = new Intl.DateTimeFormat('en-GB', {
+        timeZone: 'Asia/Makassar',
+        weekday: 'long',
+        day: 'numeric',
+        month: 'long',
+        year: 'numeric',
+      }).format(now)
+
+      setCurrentTime(timeStr)
+      setCurrentDate(dateStr)
+
+      const hour = parseInt(timeStr.split(':')[0], 10)
+      if (hour < 12) {
+        setGreetingTime('MORNING')
+      } else if (hour < 18) {
+        setGreetingTime('AFTERNOON')
+      } else {
+        setGreetingTime('EVENING')
+      }
     }
-  }
+
+    updateClock()
+    const timer = setInterval(updateClock, 1000)
+    return () => clearInterval(timer)
+  }, [])
 
   useEffect(() => {
     let isMounted = true
 
-    const initializeAttendance = async () => {
+    const fetchDashboardData = async () => {
       const {
         data: { session },
       } = await supabase.auth.getSession()
@@ -122,10 +88,9 @@ export default function AttendancePage() {
         return
       }
 
-      // Fetch profile
       const { data: profData } = await supabase
         .from('profiles')
-        .select('id, full_name, email, role, employee_code, store_id, stores(id, name)')
+        .select('full_name, role, employee_code, store_id, stores(name)')
         .eq('id', session.user.id)
         .maybeSingle()
 
@@ -133,17 +98,27 @@ export default function AttendancePage() {
       if (profData && isMounted) {
         setProfile(profData as unknown as ProfileData)
         const resolvedStore = Array.isArray(profData.stores)
-          ? (profData.stores[0] as Store | undefined)
-          : (profData.stores as Store | null)
-
-        if (resolvedStore) {
-          setAssignedStore(resolvedStore)
-          storeName = resolvedStore.name?.toLowerCase() || ''
-        }
+          ? profData.stores[0]
+          : profData.stores
+        storeName = resolvedStore?.name?.toLowerCase() || ''
       }
 
-      // Fetch today's schedule
+      const isOffice = !storeName || storeName.includes('office') || storeName.includes('hq') || storeName.includes('headquarter')
       const today = new Date().toISOString().split('T')[0]
+
+      // Today attendance
+      const { data: attData } = await supabase
+        .from('attendance')
+        .select('id, work_date, clock_in_at, clock_out_at, punctuality_status, status')
+        .eq('user_id', session.user.id)
+        .eq('work_date', today)
+        .maybeSingle()
+
+      if (attData && isMounted) {
+        setTodayRecord(attData)
+      }
+
+      // Schedule resolution
       const { data: schData } = await supabase
         .from('schedules')
         .select('shift_start, shift_end, is_day_off')
@@ -151,335 +126,123 @@ export default function AttendancePage() {
         .eq('shift_date', today)
         .maybeSingle()
 
-      if (schData && isMounted && schData.shift_start && schData.shift_end) {
-        setScheduledStart(schData.shift_start.slice(0, 5))
-        setScheduledEnd(schData.shift_end.slice(0, 5))
-      } else if (isMounted) {
-        const isOffice =
-          !storeName ||
-          storeName.includes('office') ||
-          storeName.includes('hq') ||
-          storeName.includes('headquarter')
+      let activeStartMins = isOffice ? 9 * 60 : 9 * 60 + 40
 
+      if (schData && isMounted) {
+        if (schData.is_day_off) {
+          setScheduledDisplay('DAY OFF')
+        } else if (schData.shift_start && schData.shift_end) {
+          setScheduledDisplay(`${schData.shift_start.slice(0, 5)} — ${schData.shift_end.slice(0, 5)}`)
+          const [shH, shM] = schData.shift_start.split(':').map(Number)
+          activeStartMins = shH * 60 + shM
+        }
+      } else if (isMounted) {
         if (isOffice) {
-          setScheduledStart('09:00')
-          setScheduledEnd('17:00')
+          setScheduledDisplay('09:00 — 17:00')
+          activeStartMins = 9 * 60
         } else {
           const nowHour = new Date().getHours()
           if (nowHour >= 11) {
-            setScheduledStart('11:40')
-            setScheduledEnd('20:00')
+            setScheduledDisplay('11:40 — 20:00')
+            activeStartMins = 11 * 60 + 40
           } else {
-            setScheduledStart('09:40')
-            setScheduledEnd('18:00')
+            setScheduledDisplay('09:40 — 18:00')
+            activeStartMins = 9 * 60 + 40
           }
         }
       }
 
-      // Fetch today's attendance record
-      const { data: attData } = await supabase
+      // Punctuality rate
+      const { data: allAtt } = await supabase
         .from('attendance')
-        .select('*')
+        .select('work_date, clock_in_at, punctuality_status')
         .eq('user_id', session.user.id)
-        .eq('work_date', today)
-        .maybeSingle()
+        .not('clock_in_at', 'is', null)
 
-      if (attData && isMounted) {
-        setTodayRecord(attData as AttendanceRecord)
-      }
+      if (allAtt && allAtt.length > 0 && isMounted) {
+        const onTimeCount = allAtt.filter((record) => {
+          if (record.punctuality_status === 'late') return false
+          if (record.clock_in_at) {
+            const clockDate = new Date(record.clock_in_at)
+            const timeParts = new Intl.DateTimeFormat('en-GB', {
+              timeZone: 'Asia/Makassar',
+              hour: '2-digit',
+              minute: '2-digit',
+              hour12: false,
+            }).format(clockDate).split(':')
+            const clockInMins = parseInt(timeParts[0], 10) * 60 + parseInt(timeParts[1], 10)
+            const graceThreshold = (record.work_date === today ? activeStartMins : (isOffice ? 9 * 60 : 9 * 60 + 40)) + 5
+            if (clockInMins > graceThreshold) return false
+          }
+          return true
+        }).length
 
-      // Fetch History
-      const { data: historyData } = await supabase
-        .from('attendance')
-        .select('*')
-        .eq('user_id', session.user.id)
-        .order('work_date', { ascending: false })
-        .limit(15)
-
-      if (historyData && isMounted) {
-        setHistoryRecords(historyData as AttendanceRecord[])
-      }
-
-      if (isMounted) setLoading(false)
-
-      // Geolocation
-      if (typeof window !== 'undefined' && 'geolocation' in navigator) {
-        if (isMounted) setDetectingLocation(true)
-        navigator.geolocation.getCurrentPosition(
-          async (pos) => {
-            if (!isMounted) return
-            const coords = {
-              lat: pos.coords.latitude,
-              lng: pos.coords.longitude,
-              accuracy: Math.round(pos.coords.accuracy),
-            }
-            setCurrentCoords(coords)
-
-            const address = await fetchAddressFromCoords(coords.lat, coords.lng)
-            if (isMounted) {
-              setDetectedAddress(address)
-              setDetectingLocation(false)
-            }
-          },
-          (err) => {
-            console.warn('Geolocation notice:', err.message)
-            if (isMounted) {
-              setDetectedAddress('Location permission not granted')
-              setDetectingLocation(false)
-            }
-          },
-          { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
-        )
+        setPunctualityRate(Math.round((onTimeCount / allAtt.length) * 100))
       } else if (isMounted) {
-        setDetectedAddress('Location not supported by device')
+        setPunctualityRate(100)
+      }
+
+      // Pending tasks
+      const { count: taskCount } = await supabase
+        .from('tasks')
+        .select('*', { count: 'exact', head: true })
+        .or(`assigned_to.eq.${session.user.id},assigned_to.is.null`)
+        .eq('status', 'pending')
+
+      if (isMounted) {
+        setPendingTaskCount(taskCount ?? 0)
       }
     }
 
-    initializeAttendance()
+    fetchDashboardData()
 
     return () => {
       isMounted = false
     }
   }, [router])
 
-  // Camera Handling
-  const startCamera = async () => {
-    setCapturedPhoto(null)
-    setCameraActive(true)
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 640 } },
-        audio: false,
-      })
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream
-        videoRef.current.play()
-      }
-    } catch {
-      setStatusMessage('Camera access was denied. Please allow permissions.')
-      setCameraActive(false)
-    }
+  const shiftDuration = (() => {
+    if (!todayRecord?.clock_in_at) return '0h 0m'
+    const start = new Date(todayRecord.clock_in_at).getTime()
+    const end = todayRecord.clock_out_at
+      ? new Date(todayRecord.clock_out_at).getTime()
+      : currentTime
+      ? new Date().getTime()
+      : start
+    const diffMins = Math.max(0, Math.floor((end - start) / (1000 * 60)))
+    return `${Math.floor(diffMins / 60)}h ${diffMins % 60}m`
+  })()
+
+  const formatClock = (timestamp: string | null) => {
+    if (!timestamp) return '--:--'
+    return new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
   }
 
-  const captureSnapshot = () => {
-    if (!videoRef.current || !canvasRef.current) return
-    const video = videoRef.current
-    const canvas = canvasRef.current
-    canvas.width = 480
-    canvas.height = 480
-    const ctx = canvas.getContext('2d')
-    if (ctx) {
-      ctx.drawImage(video, 0, 0, 480, 480)
-      const dataUrl = canvas.toDataURL('image/jpeg', 0.8)
-      setCapturedPhoto(dataUrl)
-    }
+  const resolvedStoreName = (() => {
+    if (!profile?.stores) return 'Office / Headquarter'
+    return Array.isArray(profile.stores) ? profile.stores[0]?.name : profile.stores.name
+  })()
 
-    const stream = video.srcObject as MediaStream
-    if (stream) stream.getTracks().forEach((t) => t.stop())
-    setCameraActive(false)
-  }
-
-  const retakePhoto = () => {
-    setCapturedPhoto(null)
-    startCamera()
-  }
-
-  const uploadPhoto = async (dataUrl: string, type: 'in' | 'out'): Promise<string | null> => {
-    if (!profile) return null
-    try {
-      const base64 = dataUrl.split(',')[1]
-      const byteCharacters = atob(base64)
-      const byteNumbers = new Array(byteCharacters.length)
-      for (let i = 0; i < byteCharacters.length; i++) {
-        byteNumbers[i] = byteCharacters.charCodeAt(i)
-      }
-      const byteArray = new Uint8Array(byteNumbers)
-      const blob = new Blob([byteArray], { type: 'image/jpeg' })
-
-      const fileName = `${profile.id}/${new Date().toISOString().split('T')[0]}_${type}_${Date.now()}.jpg`
-      const { error: uploadErr } = await supabase.storage
-        .from('attendance-photos')
-        .upload(fileName, blob, {
-          contentType: 'image/jpeg',
-          upsert: true,
-        })
-
-      if (uploadErr) return null
-      const { data: publicUrlData } = supabase.storage
-        .from('attendance-photos')
-        .getPublicUrl(fileName)
-      return publicUrlData.publicUrl
-    } catch {
-      return null
-    }
-  }
-
-  const computePunctuality = () => {
-    const now = new Date()
-    const currentHour = now.getHours()
-    const currentMin = now.getMinutes()
-    const totalCurrentMins = currentHour * 60 + currentMin
-
-    const [startH, startM] = scheduledStart.split(':').map((v) => parseInt(v, 10))
-    const scheduledStartMins = startH * 60 + startM
-    const gracePeriodMins = 5
-
-    if (totalCurrentMins > scheduledStartMins + gracePeriodMins) {
-      const lateBy = totalCurrentMins - scheduledStartMins
-      return { status: 'late', minutes: lateBy }
-    }
-    return { status: 'on_time', minutes: 0 }
-  }
-
-  const computeOvertime = () => {
-    const now = new Date()
-    const currentHour = now.getHours()
-    const currentMin = now.getMinutes()
-    const totalCurrentMins = currentHour * 60 + currentMin
-
-    const [endH, endM] = scheduledEnd.split(':').map((v) => parseInt(v, 10))
-    const scheduledEndMins = endH * 60 + endM
-
-    if (totalCurrentMins > scheduledEndMins + 10) {
-      return totalCurrentMins - scheduledEndMins
-    }
-    return 0
-  }
-
-  const handleClockIn = async () => {
-    if (!profile) return
-    if (!capturedPhoto) {
-      alert('Please take a verification selfie first.')
-      return
-    }
-
-    setSubmitting(true)
-    setStatusMessage('Synchronizing presence & location...')
-
-    let finalAddress = detectedAddress
-    if (!finalAddress && currentCoords) {
-      finalAddress = await fetchAddressFromCoords(currentCoords.lat, currentCoords.lng)
-    }
-
-    const photoUrl = await uploadPhoto(capturedPhoto, 'in')
-    const today = new Date().toISOString().split('T')[0]
-    const { status: punctualityStatus, minutes: lateMinutes } = computePunctuality()
-
-    const payload = {
-      user_id: profile.id,
-      store_id: assignedStore?.id || profile.store_id || null,
-      work_date: today,
-      clock_in_at: new Date().toISOString(),
-      clock_in_lat: currentCoords?.lat || null,
-      clock_in_lng: currentCoords?.lng || null,
-      clock_in_accuracy: currentCoords?.accuracy || null,
-      clock_in_address: finalAddress || 'Location logged without street details',
-      clock_in_photo_url: photoUrl,
-      status: 'present',
-      punctuality_status: punctualityStatus,
-      late_minutes: lateMinutes,
-    }
-
-    const { data, error } = await supabase
-      .from('attendance')
-      .upsert(payload, { onConflict: 'user_id,work_date' })
-      .select()
-      .single()
-
-    setSubmitting(false)
-
-    if (error) {
-      alert('Failed to clock in: ' + error.message)
-    } else if (data) {
-      setTodayRecord(data as AttendanceRecord)
-      setHistoryRecords((prev) => [
-        data as AttendanceRecord,
-        ...prev.filter((r) => r.id !== data.id),
-      ])
-      setCapturedPhoto(null)
-      alert(
-        punctualityStatus === 'late'
-          ? `Clocked in successfully. Marked as LATE (${lateMinutes} mins).`
-          : `Clocked in successfully. Status: ON-TIME. Have an inspiring shift!`
-      )
-    }
-  }
-
-  const submitClockOut = async () => {
-    if (!profile || !todayRecord) return
-    if (!capturedPhoto) {
-      alert('Please take a checkout selfie before clocking out.')
-      return
-    }
-
-    setSubmitting(true)
-
-    let finalAddress = detectedAddress
-    if (!finalAddress && currentCoords) {
-      finalAddress = await fetchAddressFromCoords(currentCoords.lat, currentCoords.lng)
-    }
-
-    const photoUrl = await uploadPhoto(capturedPhoto, 'out')
-    const overtimeMins = computeOvertime()
-
-    const { data, error } = await supabase
-      .from('attendance')
-      .update({
-        clock_out_at: new Date().toISOString(),
-        clock_out_lat: currentCoords?.lat || null,
-        clock_out_lng: currentCoords?.lng || null,
-        clock_out_accuracy: currentCoords?.accuracy || null,
-        clock_out_address: finalAddress || 'Location logged without street details',
-        clock_out_photo_url: photoUrl,
-        overtime_minutes: overtimeMins,
-        handover_notes: handoverNote.trim() || null,
-        cash_drawer_balance: cashBalance.trim() || null,
-      })
-      .eq('id', todayRecord.id)
-      .select()
-      .single()
-
-    setSubmitting(false)
-    setShowHandoverModal(false)
-
-    if (error) {
-      alert('Failed to clock out: ' + error.message)
-    } else if (data) {
-      setTodayRecord(data as AttendanceRecord)
-      setHistoryRecords((prev) => [
-        data as AttendanceRecord,
-        ...prev.filter((r) => r.id !== data.id),
-      ])
-      setCapturedPhoto(null)
-      alert('Shift completed and handover note saved.')
-    }
-  }
-
-  const formatTime = (ts: string | null) =>
-    ts ? new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '--:--'
-
-  const firstName = profile?.full_name?.split(' ')[0] || 'Associate'
-  const storeDisplay = assignedStore?.name || 'Office / Headquarter'
+  const displayName = profile?.full_name?.split(' ')[0] || 'Associate'
 
   return (
-    <main className="min-h-screen bg-[#F7F5F0] pb-32 md:pb-16 text-[#1A1A18]">
+    <main className="min-h-screen bg-[#FAF8F5] pb-32 md:pb-16 text-[#191C1A]">
       <StaffNav userRole={profile?.role} />
 
-      <div className="max-w-3xl mx-auto px-4 pt-6 md:pt-8 space-y-6">
-        {/* Warm Boutique Header Hero */}
-        <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-[#1E2320] via-[#2A2E2B] to-[#1A1A18] text-white p-6 sm:p-7 shadow-lg border border-[#E3DDD1]">
-          {/* Subtle Ambient Glow */}
-          <div className="absolute top-0 right-0 w-56 h-56 bg-[#C26D53]/20 rounded-full blur-3xl pointer-events-none" />
-          <div className="absolute -bottom-10 -left-10 w-48 h-48 bg-[#947352]/20 rounded-full blur-2xl pointer-events-none" />
+      <div className="max-w-5xl mx-auto px-4 pt-6 md:pt-8 space-y-6">
+        {/* Luxury Hero Banner */}
+        <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-[#191C1A] via-[#242A27] to-[#141615] text-white p-7 sm:p-9 shadow-xl border border-[#E3DDD1]">
+          <div className="absolute top-0 right-0 w-80 h-80 bg-[#C26D53]/25 rounded-full blur-3xl pointer-events-none" />
+          <div className="absolute -bottom-10 -left-10 w-64 h-64 bg-[#9E7B56]/20 rounded-full blur-2xl pointer-events-none" />
 
-          <div className="relative z-10 flex flex-col sm:flex-row sm:items-end justify-between gap-5">
+          <div className="relative z-10 flex flex-col md:flex-row md:items-end justify-between gap-6">
             <div>
               <div className="flex items-center space-x-2">
                 <span className="text-[10px] tracking-[0.3em] uppercase text-[#D8C7B5] font-mono">
-                  TWILM STAFF OS
+                  STAFF OS / PERSONAL ATELIER
                 </span>
-                <span className="w-1 h-1 rounded-full bg-[#C26D53]" />
-                <span className="text-[9px] uppercase font-mono px-2 py-0.5 rounded-full bg-white/10 text-white border border-white/15">
+                <span className="w-1.5 h-1.5 rounded-full bg-[#C26D53]" />
+                <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded-full bg-white/10 text-[#FAF7F2] border border-white/15">
                   {profile?.role || 'STAFF'}
                 </span>
                 {profile?.employee_code && (
@@ -489,306 +252,184 @@ export default function AttendancePage() {
                 )}
               </div>
 
-              <h1 className="text-2xl sm:text-3xl font-light tracking-tight mt-2 text-[#FAF7F2]">
-                WELCOME, <span className="font-serif italic font-normal text-[#E8C5A8]">{firstName}</span>
+              <h1 className="text-3xl sm:text-5xl font-light tracking-tight mt-3 text-[#FAF7F2]">
+                GOOD {greetingTime},{' '}
+                <span className="font-serif italic font-normal text-[#E8C5A8]">{displayName}</span>
               </h1>
-              <p className="text-xs text-[#B3AEA6] mt-1">
-                Record your attendance selfie for today&apos;s shift.
+              <p className="text-xs text-[#B5AEA4] mt-1.5 tracking-wide">
+                {currentDate} • Operating from <span className="text-[#FAF7F2] font-medium">{resolvedStoreName}</span>
               </p>
             </div>
 
-            {/* Time & Shift Pill */}
-            <div className="bg-white/5 backdrop-blur-md rounded-xl p-3 sm:p-4 border border-white/10 text-left sm:text-right min-w-[180px]">
-              <div className="flex items-center sm:justify-end space-x-1.5 mb-0.5">
+            {/* Bali Time Pill */}
+            <div className="bg-white/5 backdrop-blur-md rounded-2xl p-4 border border-white/10 text-left md:text-right min-w-[200px]">
+              <div className="flex items-center md:justify-end space-x-1.5 mb-0.5">
                 <span className="w-1.5 h-1.5 rounded-full bg-[#C26D53] animate-ping" />
                 <span className="text-[9px] uppercase tracking-widest text-[#D8C7B5] font-mono">
                   BALI WITA
                 </span>
               </div>
-              <span className="text-xl sm:text-2xl font-mono font-light text-white tracking-tight block">
-                {currentTimeStr || '00:00:00'}
+              <span className="text-2xl sm:text-3xl font-mono font-light text-white tracking-tight block">
+                {currentTime || '00:00:00'}
               </span>
-              <span className="text-[11px] font-mono text-[#C2B7A8] block mt-1">
-                Shift: {scheduledStart} — {scheduledEnd}
+              <span className="text-[10px] font-mono text-[#C2B7A8] block mt-1">
+                Store Schedule: {scheduledDisplay}
               </span>
             </div>
           </div>
         </div>
 
-        {/* Location & Assigned Outlet Card */}
-        <div className="rounded-xl bg-white border border-[#E8E2D5] p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs shadow-sm">
-          <div className="flex items-center space-x-3.5">
-            <div className="w-10 h-10 rounded-xl bg-[#FBF0EC] border border-[#F2D7CE] flex items-center justify-center text-[#C26D53] text-sm shadow-xs">
-              📍
-            </div>
-            <div>
-              <span className="text-[10px] uppercase tracking-wider text-[#8A857C] font-mono block">
-                STORE ASSIGNMENT
-              </span>
-              <span className="font-medium text-[#1A1A18] text-sm tracking-tight">{storeDisplay}</span>
-            </div>
-          </div>
-
-          <div className="sm:text-right max-w-md bg-[#FAF8F5] sm:bg-transparent p-2.5 sm:p-0 rounded-lg sm:rounded-none border sm:border-0 border-[#E8E2D5]">
-            <span className="text-[10px] uppercase tracking-wider text-[#8A857C] font-mono block">
-              DETECTED STREET ADDRESS
-            </span>
-            <span className="font-mono text-[11px] text-[#423E37] truncate block mt-0.5">
-              {detectingLocation ? 'Resolving street address...' : detectedAddress || 'GPS locked'}
-            </span>
-          </div>
-        </div>
-
-        {/* Camera Terminal Container */}
-        <div className="rounded-2xl bg-white border border-[#E8E2D5] p-6 sm:p-8 space-y-6 shadow-sm">
-          <div className="flex flex-col items-center justify-center space-y-5">
-            {/* Viewfinder Frame with Terracotta Accents */}
-            <div className="relative w-64 h-64 rounded-2xl bg-[#FAF8F5] border-2 border-dashed border-[#D6CEC0] flex items-center justify-center overflow-hidden shadow-inner group">
-              {/* Boutique Viewfinder Reticles */}
-              <div className="absolute top-3 left-3 w-4 h-4 border-t-2 border-l-2 border-[#C26D53] pointer-events-none" />
-              <div className="absolute top-3 right-3 w-4 h-4 border-t-2 border-r-2 border-[#C26D53] pointer-events-none" />
-              <div className="absolute bottom-3 left-3 w-4 h-4 border-b-2 border-l-2 border-[#C26D53] pointer-events-none" />
-              <div className="absolute bottom-3 right-3 w-4 h-4 border-b-2 border-r-2 border-[#C26D53] pointer-events-none" />
-
-              {cameraActive ? (
-                <video ref={videoRef} playsInline autoPlay className="w-full h-full object-cover" />
-              ) : capturedPhoto ? (
-                <Image src={capturedPhoto} alt="Verification Selfie" fill className="object-cover" />
-              ) : (
-                <div className="text-center p-6 space-y-2">
-                  <div className="w-12 h-12 rounded-full bg-[#FBF0EC] text-[#C26D53] mx-auto flex items-center justify-center text-lg border border-[#F2D7CE] shadow-xs">
-                    ✦
-                  </div>
-                  <span className="text-[10px] uppercase tracking-widest text-[#8A857C] font-mono block">
-                    CAMERA VERIFICATION
-                  </span>
-                  <p className="text-xs text-[#736E66] max-w-[180px] mx-auto leading-relaxed">
-                    Take a clear selfie to mark your shift entry
-                  </p>
-                </div>
-              )}
-            </div>
-            <canvas ref={canvasRef} className="hidden" />
-
-            {/* Camera Controls */}
-            <div className="flex items-center space-x-3">
-              {!cameraActive && !capturedPhoto && !todayRecord?.clock_out_at && (
-                <button
-                  onClick={startCamera}
-                  disabled={loading}
-                  className="px-6 py-2.5 rounded-full bg-[#1A1A18] text-white text-xs uppercase tracking-widest hover:bg-[#C26D53] disabled:opacity-30 transition-all duration-200 shadow-sm flex items-center space-x-2"
-                >
-                  <span>Start Camera</span>
-                </button>
-              )}
-
-              {cameraActive && (
-                <button
-                  onClick={captureSnapshot}
-                  className="px-7 py-2.5 rounded-full bg-[#C26D53] text-white text-xs uppercase tracking-widest hover:bg-[#AD5E46] transition-all duration-200 shadow-md animate-pulse"
-                >
-                  Snap Selfie
-                </button>
-              )}
-
-              {capturedPhoto && !cameraActive && !todayRecord?.clock_out_at && (
-                <button
-                  onClick={retakePhoto}
-                  className="px-4 py-2 rounded-full border border-[#D6CEC0] bg-[#FAF8F5] text-xs uppercase tracking-wider text-[#635E56] hover:text-[#1A1A18] hover:border-[#1A1A18] transition"
-                >
-                  Retake Photo
-                </button>
-              )}
-            </div>
-          </div>
-
-          {/* Action Trigger */}
-          <div className="border-t border-[#E8E2D5] pt-5 space-y-3">
-            {!todayRecord?.clock_in_at ? (
-              <button
-                onClick={handleClockIn}
-                disabled={submitting || !capturedPhoto}
-                className="w-full py-4 rounded-xl bg-[#1A1A18] hover:bg-[#C26D53] disabled:bg-[#E8E2D5] disabled:text-[#A39E94] text-white text-xs uppercase tracking-[0.2em] font-medium transition-all duration-300 shadow-sm disabled:shadow-none"
-              >
-                {submitting ? 'Recording Presence...' : 'Verify & Clock In'}
-              </button>
-            ) : !todayRecord?.clock_out_at ? (
-              <button
-                onClick={() => {
-                  if (!capturedPhoto) {
-                    alert('Please take a checkout selfie before clocking out.')
-                    return
-                  }
-                  setShowHandoverModal(true)
-                }}
-                disabled={submitting}
-                className="w-full py-4 rounded-xl bg-[#2E473B] hover:bg-[#23382D] disabled:bg-[#E8E2D5] text-white text-xs uppercase tracking-[0.2em] font-medium transition-all duration-300 shadow-sm"
-              >
-                Proceed to Shift Handover & Clock Out
-              </button>
-            ) : (
-              <div className="p-4 rounded-xl bg-[#EDF4F0] text-center border border-[#CFE2D7] text-xs">
-                <span className="font-medium text-[#2E473B] uppercase tracking-wider text-[11px] block">
-                  ✓ Shift Finished for Today
-                </span>
-                <p className="text-[#5B7869] text-[11px] font-mono mt-0.5">
-                  Clock in: {formatTime(todayRecord.clock_in_at)} — Clock out:{' '}
-                  {formatTime(todayRecord.clock_out_at)}
-                </p>
+        {/* Live Shift Card */}
+        <div className="rounded-2xl bg-white border border-[#E8E2D5] p-6 space-y-5 shadow-sm">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-[#E8E2D5] pb-5">
+            <div className="flex items-center space-x-3.5">
+              <div className="w-11 h-11 rounded-2xl bg-[#FBF0EC] border border-[#F2D7CE] flex items-center justify-center text-[#C26D53] text-base">
+                ⏱
               </div>
-            )}
-
-            {statusMessage && (
-              <p className="text-[11px] text-center text-[#8A857C] font-mono">{statusMessage}</p>
-            )}
-          </div>
-        </div>
-
-        {/* My Attendance History Table */}
-        <div id="history" className="rounded-2xl bg-white border border-[#E8E2D5] overflow-hidden shadow-sm">
-          <div className="p-4 sm:p-5 border-b border-[#E8E2D5] bg-[#FAF8F5] flex justify-between items-center">
-            <div>
-              <span className="text-xs uppercase tracking-wider font-semibold text-[#1A1A18]">
-                My Shift Logbook
-              </span>
-              <p className="text-[11px] text-[#8A857C]">
-                Your personal check-in history and punctuality badges.
-              </p>
-            </div>
-            <span className="text-[10px] font-mono px-2.5 py-1 rounded-full bg-[#EAE5DA] text-[#4A453E]">
-              {historyRecords.length} Shifts Recorded
-            </span>
-          </div>
-
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs text-[#1A1A18]">
-              <thead className="bg-[#FAF8F5] text-[10px] uppercase tracking-wider text-[#8A857C] border-b border-[#E8E2D5]">
-                <tr>
-                  <th className="p-3.5">Date</th>
-                  <th className="p-3.5">Clock In</th>
-                  <th className="p-3.5">Punctuality</th>
-                  <th className="p-3.5">Clock Out</th>
-                  <th className="p-3.5">Hours</th>
-                  <th className="p-3.5">Handover Notes</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-[#E8E2D5]">
-                {historyRecords.length === 0 ? (
-                  <tr>
-                    <td colSpan={6} className="p-6 text-center text-xs text-[#8A857C]">
-                      No previous shifts recorded yet.
-                    </td>
-                  </tr>
-                ) : (
-                  historyRecords.map((r) => {
-                    let totalHours = '--'
-                    if (r.clock_in_at && r.clock_out_at) {
-                      const diffMs =
-                        new Date(r.clock_out_at).getTime() - new Date(r.clock_in_at).getTime()
-                      const hrs = Math.floor(diffMs / (1000 * 60 * 60))
-                      const mins = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60))
-                      totalHours = `${hrs}h ${mins}m`
-                    }
-
-                    return (
-                      <tr key={r.id} className="hover:bg-[#FAF8F5]/80 transition-colors">
-                        <td className="p-3.5 font-mono text-xs whitespace-nowrap text-[#4A453E]">{r.work_date}</td>
-                        <td className="p-3.5 font-mono text-xs whitespace-nowrap font-medium">
-                          {formatTime(r.clock_in_at)}
-                        </td>
-                        <td className="p-3.5 whitespace-nowrap">
-                          {r.punctuality_status === 'late' ? (
-                            <span className="inline-block text-[9px] uppercase px-2 py-0.5 rounded-md bg-[#FDE8E8] text-[#9B1C1C] border border-[#F8B4B4] font-mono font-medium">
-                              Late ({r.late_minutes || 0}m)
-                            </span>
-                          ) : r.clock_in_at ? (
-                            <span className="inline-block text-[9px] uppercase px-2 py-0.5 rounded-md bg-[#EDF4F0] text-[#2E473B] border border-[#CFE2D7] font-mono font-medium">
-                              On-Time
-                            </span>
-                          ) : (
-                            <span className="text-[#A39E94]">--</span>
-                          )}
-                        </td>
-                        <td className="p-3.5 font-mono text-xs whitespace-nowrap">
-                          {formatTime(r.clock_out_at)}
-                        </td>
-                        <td className="p-3.5 font-mono text-xs whitespace-nowrap">{totalHours}</td>
-                        <td className="p-3.5 text-[11px] text-[#736E66] max-w-xs truncate">
-                          {r.handover_notes || <span className="text-[#A39E94] italic">None</span>}
-                        </td>
-                      </tr>
-                    )
-                  })
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        {/* Shift Handover Modal */}
-        {showHandoverModal && (
-          <div className="fixed inset-0 z-50 bg-[#1A1A18]/60 backdrop-blur-sm flex items-center justify-center p-4">
-            <div className="bg-white rounded-2xl border border-[#E8E2D5] max-w-lg w-full p-6 space-y-4 shadow-2xl">
               <div>
-                <span className="text-[10px] uppercase tracking-widest text-[#C26D53] font-mono block">
-                  END OF SHIFT
+                <span className="text-[10px] tracking-widest uppercase text-[#8A857C] font-mono block">
+                  ACTIVE SHIFT STATUS
                 </span>
-                <h2 className="text-xl font-light tracking-tight mt-0.5 text-[#1A1A18]">
-                  Shift Handover <span className="font-serif italic font-normal text-[#947352]">Logbook</span>
-                </h2>
-                <p className="text-xs text-[#736E66] mt-1">
-                  Leave brief notes for the next shift associate and note the cash balance.
-                </p>
-              </div>
-
-              <div className="space-y-3">
-                <div>
-                  <label className="text-[10px] uppercase tracking-wider text-[#8A857C] font-mono block mb-1">
-                    Store Handover Notes
-                  </label>
-                  <textarea
-                    rows={3}
-                    value={handoverNote}
-                    onChange={(e) => setHandoverNote(e.target.value)}
-                    placeholder="Customer reservations, fitting room checks, restock needed..."
-                    className="w-full p-3 text-xs rounded-xl bg-[#FAF8F5] border border-[#E8E2D5] text-[#1A1A18] focus:outline-none focus:border-[#C26D53] resize-none"
+                <div className="flex items-center space-x-2 mt-0.5">
+                  <span className="text-lg sm:text-xl font-medium tracking-tight text-[#191C1A]">
+                    {!todayRecord?.clock_in_at
+                      ? 'Ready to Clock In'
+                      : todayRecord.clock_out_at
+                      ? 'Shift Completed for Today'
+                      : 'Currently On Floor'}
+                  </span>
+                  <span
+                    className={`w-2.5 h-2.5 rounded-full ${
+                      !todayRecord?.clock_in_at
+                        ? 'bg-[#DCD6C8]'
+                        : todayRecord.clock_out_at
+                        ? 'bg-[#2E473B]'
+                        : 'bg-[#C26D53] animate-pulse'
+                    }`}
                   />
                 </div>
-
-                <div>
-                  <label className="text-[10px] uppercase tracking-wider text-[#8A857C] font-mono block mb-1">
-                    Closing Cash Drawer / Petty Cash (Optional)
-                  </label>
-                  <input
-                    type="text"
-                    value={cashBalance}
-                    onChange={(e) => setCashBalance(e.target.value)}
-                    placeholder="e.g. IDR 1.500.000 / Balanced"
-                    className="w-full p-2.5 text-xs rounded-xl bg-[#FAF8F5] border border-[#E8E2D5] text-[#1A1A18] focus:outline-none focus:border-[#C26D53] font-mono"
-                  />
-                </div>
-              </div>
-
-              <div className="flex items-center justify-end space-x-2 pt-2 border-t border-[#E8E2D5]">
-                <button
-                  type="button"
-                  onClick={() => setShowHandoverModal(false)}
-                  className="px-4 py-2 text-xs uppercase tracking-wider text-[#736E66] hover:text-[#1A1A18] transition"
-                >
-                  Back
-                </button>
-                <button
-                  type="button"
-                  onClick={submitClockOut}
-                  disabled={submitting}
-                  className="px-5 py-2.5 rounded-full bg-[#1A1A18] hover:bg-[#2E473B] text-white text-xs uppercase tracking-widest disabled:opacity-40 transition-colors shadow-sm"
-                >
-                  {submitting ? 'Submitting...' : 'Complete Clock Out'}
-                </button>
               </div>
             </div>
+
+            <Link
+              href="/attendance"
+              className="px-6 py-3 rounded-full bg-[#191C1A] hover:bg-[#C26D53] text-white text-xs uppercase tracking-[0.2em] font-medium transition-all shadow-sm text-center"
+            >
+              {!todayRecord?.clock_in_at
+                ? '✦ Clock In Now'
+                : todayRecord.clock_out_at
+                ? 'View Logbook'
+                : 'Complete & Clock Out'}
+            </Link>
           </div>
-        )}
+
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 pt-1">
+            <div className="p-3 rounded-xl bg-[#FAF8F5] border border-[#E8E2D5]/70">
+              <span className="text-[10px] tracking-wider uppercase text-[#8A857C] font-mono block">
+                CLOCK IN
+              </span>
+              <span className="text-sm sm:text-base font-mono font-medium text-[#191C1A] mt-1 block">
+                {formatClock(todayRecord?.clock_in_at || null)}
+              </span>
+            </div>
+
+            <div className="p-3 rounded-xl bg-[#FAF8F5] border border-[#E8E2D5]/70">
+              <span className="text-[10px] tracking-wider uppercase text-[#8A857C] font-mono block">
+                CLOCK OUT
+              </span>
+              <span className="text-sm sm:text-base font-mono font-medium text-[#191C1A] mt-1 block">
+                {formatClock(todayRecord?.clock_out_at || null)}
+              </span>
+            </div>
+
+            <div className="p-3 rounded-xl bg-[#FAF8F5] border border-[#E8E2D5]/70">
+              <span className="text-[10px] tracking-wider uppercase text-[#8A857C] font-mono block">
+                FLOOR TIME
+              </span>
+              <span className="text-sm sm:text-base font-mono font-medium text-[#191C1A] mt-1 block">
+                {shiftDuration}
+              </span>
+            </div>
+
+            <div className="p-3 rounded-xl bg-[#FAF8F5] border border-[#E8E2D5]/70">
+              <span className="text-[10px] tracking-wider uppercase text-[#8A857C] font-mono block">
+                SCHEDULE
+              </span>
+              <span className="text-sm sm:text-base font-mono font-medium text-[#191C1A] mt-1 block">
+                {scheduledDisplay}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* Triple Feature Cards */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <Link
+            href="/attendance#history"
+            className="group rounded-2xl bg-white border border-[#E8E2D5] p-5 hover:border-[#C26D53] hover:shadow-md transition-all block relative overflow-hidden"
+          >
+            <div className="flex justify-between items-start">
+              <span className="text-[10px] tracking-widest uppercase text-[#8A857C] font-mono">
+                PUNCTUALITY
+              </span>
+              <span
+                className={`text-[9px] uppercase px-2 py-0.5 rounded-full font-mono font-medium ${
+                  punctualityRate >= 90
+                    ? 'bg-[#EDF4F0] text-[#2E473B] border border-[#CFE2D7]'
+                    : 'bg-[#FDE8E8] text-[#9B1C1C] border border-[#F8B4B4]'
+                }`}
+              >
+                {punctualityRate >= 90 ? 'PERFECT STANDING' : 'NEEDS ATTENTION'}
+              </span>
+            </div>
+            <div className="mt-3">
+              <span className="text-3xl font-light font-mono text-[#191C1A] group-hover:text-[#C26D53] transition-colors">
+                {punctualityRate}%
+              </span>
+              <p className="text-[11px] text-[#8A857C] mt-1">Tap to review shift history ✦</p>
+            </div>
+          </Link>
+
+          <Link
+            href="/tasks"
+            className="group rounded-2xl bg-white border border-[#E8E2D5] p-5 hover:border-[#2E473B] hover:shadow-md transition-all block"
+          >
+            <div className="flex justify-between items-start">
+              <span className="text-[10px] tracking-widest uppercase text-[#8A857C] font-mono">
+                STORE RITUALS
+              </span>
+              <span className="text-[9px] uppercase px-2 py-0.5 rounded-full bg-[#FAF0E6] text-[#9E7B56] border border-[#EEDCC7] font-mono font-medium">
+                ACTIVE TODAY
+              </span>
+            </div>
+            <div className="mt-3">
+              <span className="text-3xl font-light font-mono text-[#191C1A] group-hover:text-[#2E473B] transition-colors">
+                {pendingTaskCount}
+              </span>
+              <p className="text-[11px] text-[#8A857C] mt-1">Checklist items to inspect ✦</p>
+            </div>
+          </Link>
+
+          <Link
+            href="/leave"
+            className="group rounded-2xl bg-white border border-[#E8E2D5] p-5 hover:border-[#9E7B56] hover:shadow-md transition-all block"
+          >
+            <div className="flex justify-between items-start">
+              <span className="text-[10px] tracking-widest uppercase text-[#8A857C] font-mono">
+                LEAVE ENTITLEMENT
+              </span>
+              <span className="text-[9px] uppercase px-2 py-0.5 rounded-full bg-[#F2EFE8] text-[#635E56] font-mono">
+                ANNUAL
+              </span>
+            </div>
+            <div className="mt-3">
+              <span className="text-3xl font-light font-mono text-[#191C1A] group-hover:text-[#9E7B56] transition-colors">
+                12
+              </span>
+              <p className="text-[11px] text-[#8A857C] mt-1">Available balance days ✦</p>
+            </div>
+          </Link>
+        </div>
       </div>
     </main>
   )

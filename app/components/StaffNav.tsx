@@ -2,186 +2,88 @@
 
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
-import { useState } from 'react'
 import { supabase } from '../lib/supabase'
 
-export default function StaffNav({ userRole }: { userRole?: string }) {
+interface StaffNavProps {
+  userRole?: string | null
+}
+
+export default function StaffNav({ userRole }: StaffNavProps) {
   const pathname = usePathname()
   const router = useRouter()
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
 
-  const handleSignOut = async () => {
+  const handleLogout = async () => {
     await supabase.auth.signOut()
     router.push('/login')
   }
 
-  const primaryNavItems = [
-    { label: 'Dash', fullLabel: 'Dashboard', href: '/dashboard' },
-    { label: 'Clock', fullLabel: 'Attendance', href: '/attendance' },
-    { label: 'Roster', fullLabel: 'Schedule', href: '/schedule' },
-    { label: 'Tasks', fullLabel: 'Tasks', href: '/tasks' },
-    { label: 'Leave', fullLabel: 'Leave', href: '/leave' },
-  ]
-
-  const allNavItems = [
-    { label: 'Dashboard', href: '/dashboard' },
-    { label: 'Attendance', href: '/attendance' },
-    { label: 'Schedule', href: '/schedule' },
-    { label: 'Tasks', href: '/tasks' },
-    { label: 'Leave', href: '/leave' },
-    { label: 'News & Memo', href: '/announcements' },
-    { label: 'My Profile', href: '/profile' },
+  const navLinks = [
+    { href: '/dashboard', label: 'Overview', icon: '✦' },
+    { href: '/attendance', label: 'Presence', icon: '⏱' },
+    { href: '/tasks', label: 'Rituals & Tasks', icon: '✓' },
+    { href: '/leave', label: 'Leave', icon: '◷' },
   ]
 
   return (
-    <>
-      {/* Top Header */}
-      <header className="sticky top-0 z-40 bg-[#fbfbf9]/95 backdrop-blur-md border-b border-[#eaeae5]">
-        <div className="max-w-4xl mx-auto px-4 h-14 flex items-center justify-between">
-          <div className="flex items-center space-x-6">
-            <Link
-              href="/dashboard"
-              className="text-xs tracking-[0.25em] font-medium uppercase text-[#171716]"
-            >
-              TWILM <span className="text-[#73726c]">OS</span>
-            </Link>
+    <header className="sticky top-0 z-40 bg-[#FAF8F5]/90 backdrop-blur-md border-b border-[#E8E2D5]">
+      {/* Top micro-banner */}
+      <div className="bg-[#191C1A] text-[#D8C7B5] px-4 py-1 text-[9px] uppercase tracking-[0.3em] font-mono flex justify-between items-center">
+        <span>TWILM ATELIER &amp; BOUTIQUES</span>
+        <span className="hidden sm:inline">BALI • STAFF OS 2.6</span>
+      </div>
 
-            {/* Desktop Navigation */}
-            <nav className="hidden md:flex items-center space-x-5 text-xs tracking-wider uppercase">
-              {allNavItems.map((item) => (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  className={`transition-colors hover:text-black ${
-                    pathname === item.href
-                      ? 'text-black font-semibold border-b border-black pb-0.5'
-                      : 'text-[#73726c]'
-                  }`}
-                >
-                  {item.label}
-                </Link>
-              ))}
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 h-14 flex items-center justify-between">
+        {/* Brand Mark */}
+        <Link href="/dashboard" className="flex items-center space-x-2 group">
+          <span className="w-6 h-6 rounded-full bg-[#191C1A] text-[#FAF8F5] flex items-center justify-center text-[10px] font-serif group-hover:bg-[#C26D53] transition-colors">
+            T
+          </span>
+          <span className="text-sm tracking-[0.25em] font-light text-[#191C1A] uppercase">
+            TWILM <span className="font-serif italic text-xs text-[#9E7B56]">OS</span>
+          </span>
+        </Link>
 
-              {userRole === 'admin' && (
-                <Link
-                  href="/admin"
-                  className="text-amber-700 font-semibold hover:text-amber-900 transition-colors"
-                >
-                  Admin
-                </Link>
-              )}
-            </nav>
-          </div>
-
-          <div className="flex items-center space-x-2">
-            {/* Mobile Menu Toggle Button */}
-            <button
-              onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-              className="md:hidden text-[10px] tracking-widest uppercase text-[#171716] px-2.5 py-1.5 border border-[#eaeae5] bg-white rounded cursor-pointer"
-            >
-              {mobileMenuOpen ? 'CLOSE' : 'MENU'}
-            </button>
-
-            <button
-              onClick={handleSignOut}
-              className="text-[10px] tracking-wider uppercase text-[#73726c] hover:text-black transition-colors px-2.5 py-1.5 border border-[#eaeae5] bg-white rounded cursor-pointer"
-            >
-              Sign Out
-            </button>
-          </div>
-        </div>
-
-        {/* Mobile Expanded Drawer Menu */}
-        {mobileMenuOpen && (
-          <div className="md:hidden border-t border-[#eaeae5] bg-white px-5 py-4 space-y-3 shadow-lg animate-in slide-in-from-top duration-200">
-            <span className="text-[9px] uppercase tracking-widest text-[#73726c] font-mono block mb-1">
-              NAVIGATION
-            </span>
-            <div className="grid grid-cols-2 gap-2">
-              {allNavItems.map((item) => (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  onClick={() => setMobileMenuOpen(false)}
-                  className={`p-2.5 text-xs uppercase tracking-wider border ${
-                    pathname === item.href
-                      ? 'bg-black text-white border-black font-medium'
-                      : 'bg-[#fbfbf9] text-[#171716] border-[#eaeae5]'
-                  }`}
-                >
-                  {item.label}
-                </Link>
-              ))}
-
-              {userRole === 'admin' && (
-                <Link
-                  href="/admin"
-                  onClick={() => setMobileMenuOpen(false)}
-                  className="col-span-2 p-2.5 text-xs uppercase tracking-wider text-center bg-amber-900 text-white font-medium"
-                >
-                  Management Admin Portal
-                </Link>
-              )}
-            </div>
-          </div>
-        )}
-      </header>
-
-      {/* Modern Mobile Bottom Dock */}
-      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-md border-t border-[#eaeae5] px-2 pt-2 pb-[max(0.6rem,env(safe-area-inset-bottom))] shadow-[0_-4px_12px_rgba(0,0,0,0.03)]">
-        <div className="flex items-center justify-around max-w-md mx-auto">
-          {primaryNavItems.map((item) => {
-            const isActive = pathname === item.href
+        {/* Navigation Items */}
+        <nav className="flex items-center space-x-1 sm:space-x-2">
+          {navLinks.map((link) => {
+            const isActive = pathname === link.href
             return (
               <Link
-                key={item.href}
-                href={item.href}
-                className={`flex flex-col items-center py-1 px-2.5 transition-colors ${
-                  isActive ? 'text-black' : 'text-[#8c8b85]'
+                key={link.href}
+                href={link.href}
+                className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all ${
+                  isActive
+                    ? 'bg-[#191C1A] text-[#FAF8F5] shadow-xs'
+                    : 'text-[#6B665E] hover:text-[#191C1A] hover:bg-[#F2EFE8]'
                 }`}
               >
-                <span
-                  className={`text-[10px] tracking-wider uppercase font-mono ${
-                    isActive ? 'font-bold' : 'font-normal'
-                  }`}
-                >
-                  {item.label}
-                </span>
-                {isActive && (
-                  <span className="w-1.5 h-1.5 bg-black rounded-full mt-1 animate-pulse" />
-                )}
+                <span className="mr-1 text-[10px] opacity-70">{link.icon}</span>
+                {link.label}
               </Link>
             )
           })}
 
-          {userRole === 'admin' ? (
+          {userRole === 'admin' && (
             <Link
               href="/admin"
-              className={`flex flex-col items-center py-1 px-2.5 ${
-                pathname === '/admin' ? 'text-amber-800' : 'text-amber-700'
+              className={`px-3 py-1.5 rounded-full text-xs font-mono uppercase tracking-wider transition-all ${
+                pathname === '/admin'
+                  ? 'bg-[#C26D53] text-white shadow-xs'
+                  : 'text-[#C26D53] bg-[#FBF0EC] border border-[#F2D7CE] hover:bg-[#C26D53] hover:text-white'
               }`}
             >
-              <span className="text-[10px] tracking-wider uppercase font-mono font-bold">
-                ADMIN
-              </span>
-              {pathname === '/admin' && (
-                <span className="w-1.5 h-1.5 bg-amber-800 rounded-full mt-1" />
-              )}
-            </Link>
-          ) : (
-            <Link
-              href="/announcements"
-              className={`flex flex-col items-center py-1 px-2.5 ${
-                pathname === '/announcements' ? 'text-black' : 'text-[#8c8b85]'
-              }`}
-            >
-              <span className="text-[10px] tracking-wider uppercase font-mono">
-                NEWS
-              </span>
+              Admin
             </Link>
           )}
-        </div>
-      </nav>
-    </>
+
+          <button
+            onClick={handleLogout}
+            className="ml-2 px-3 py-1 rounded-full border border-[#DCD6C8] text-[11px] text-[#827D73] hover:text-[#191C1A] hover:border-[#191C1A] transition"
+          >
+            Exit
+          </button>
+        </nav>
+      </div>
+    </header>
   )
 }
