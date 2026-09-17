@@ -16,6 +16,7 @@ interface ProfileData {
   full_name: string | null
   email: string | null
   role: string
+  employee_code?: string | null
   store_id: string | null
   stores?: Store | Store[] | null
 }
@@ -52,6 +53,7 @@ export default function AttendancePage() {
   const [historyRecords, setHistoryRecords] = useState<AttendanceRecord[]>([])
   const [scheduledStart, setScheduledStart] = useState<string>('09:40')
   const [scheduledEnd, setScheduledEnd] = useState<string>('18:00')
+  const [currentTimeStr, setCurrentTimeStr] = useState<string>('')
 
   const [cameraActive, setCameraActive] = useState(false)
   const [capturedPhoto, setCapturedPhoto] = useState<string | null>(null)
@@ -67,6 +69,25 @@ export default function AttendancePage() {
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
   const [statusMessage, setStatusMessage] = useState<string>('')
+
+  // Live Bali Time ticker
+  useEffect(() => {
+    const updateTime = () => {
+      const now = new Date()
+      setCurrentTimeStr(
+        new Intl.DateTimeFormat('en-GB', {
+          timeZone: 'Asia/Makassar',
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit',
+          hour12: false,
+        }).format(now)
+      )
+    }
+    updateTime()
+    const interval = setInterval(updateTime, 1000)
+    return () => clearInterval(interval)
+  }, [])
 
   // Convert Coordinates to Human Readable Address (OpenStreetMap Nominatim)
   const fetchAddressFromCoords = async (lat: number, lng: number): Promise<string> => {
@@ -104,7 +125,7 @@ export default function AttendancePage() {
       // Fetch profile with assigned store
       const { data: profData } = await supabase
         .from('profiles')
-        .select('id, full_name, email, role, store_id, stores(id, name)')
+        .select('id, full_name, email, role, employee_code, store_id, stores(id, name)')
         .eq('id', session.user.id)
         .maybeSingle()
 
@@ -121,7 +142,7 @@ export default function AttendancePage() {
         }
       }
 
-      // Fetch today's schedule from Supabase
+      // Fetch today's schedule
       const today = new Date().toISOString().split('T')[0]
       const { data: schData } = await supabase
         .from('schedules')
@@ -134,7 +155,12 @@ export default function AttendancePage() {
         setScheduledStart(schData.shift_start.slice(0, 5))
         setScheduledEnd(schData.shift_end.slice(0, 5))
       } else if (isMounted) {
-        const isOffice = !storeName || storeName.includes('office') || storeName.includes('hq') || storeName.includes('headquarter')
+        const isOffice =
+          !storeName ||
+          storeName.includes('office') ||
+          storeName.includes('hq') ||
+          storeName.includes('headquarter')
+
         if (isOffice) {
           setScheduledStart('09:00')
           setScheduledEnd('17:00')
@@ -162,13 +188,13 @@ export default function AttendancePage() {
         setTodayRecord(attData as AttendanceRecord)
       }
 
-      // Fetch User's Attendance History (last 30 days)
+      // Fetch User's Attendance History (last 15 records)
       const { data: historyData } = await supabase
         .from('attendance')
         .select('*')
         .eq('user_id', session.user.id)
         .order('work_date', { ascending: false })
-        .limit(30)
+        .limit(15)
 
       if (historyData && isMounted) {
         setHistoryRecords(historyData as AttendanceRecord[])
@@ -366,12 +392,15 @@ export default function AttendancePage() {
       alert('Failed to clock in: ' + error.message)
     } else if (data) {
       setTodayRecord(data as AttendanceRecord)
-      setHistoryRecords((prev) => [data as AttendanceRecord, ...prev.filter((r) => r.id !== data.id)])
+      setHistoryRecords((prev) => [
+        data as AttendanceRecord,
+        ...prev.filter((r) => r.id !== data.id),
+      ])
       setCapturedPhoto(null)
       alert(
         punctualityStatus === 'late'
-          ? `Clocked in successfully. Marked as LATE (${lateMinutes} mins). Shift start was ${scheduledStart}.`
-          : `Clocked in successfully. Status: ON-TIME (${scheduledStart} Shift).`
+          ? `Clocked in successfully. Marked as LATE (${lateMinutes} mins). Shift was ${scheduledStart}.`
+          : `Clocked in successfully. Status: ON-TIME (${scheduledStart} Shift). Have a great shift!`
       )
     }
   }
@@ -417,53 +446,79 @@ export default function AttendancePage() {
       alert('Failed to clock out: ' + error.message)
     } else if (data) {
       setTodayRecord(data as AttendanceRecord)
-      setHistoryRecords((prev) => [data as AttendanceRecord, ...prev.filter((r) => r.id !== data.id)])
+      setHistoryRecords((prev) => [
+        data as AttendanceRecord,
+        ...prev.filter((r) => r.id !== data.id),
+      ])
       setCapturedPhoto(null)
-      alert('Shift completed and handover note saved successfully.')
+      alert('Shift finished and handover note saved successfully.')
     }
   }
 
   const formatTime = (ts: string | null) =>
     ts ? new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '--:--'
 
+  const firstName = profile?.full_name?.split(' ')[0] || 'Associate'
+  const storeDisplay = assignedStore?.name || 'Office / Headquarter'
+
   return (
-    <main className="min-h-screen bg-[#fbfbf9] pb-32 md:pb-16 text-[#171716]">
+    <main className="min-h-screen bg-[#fafaf8] pb-32 md:pb-16 text-[#171716]">
       <StaffNav userRole={profile?.role} />
 
       <div className="max-w-3xl mx-auto px-4 pt-6 md:pt-8 space-y-6">
-        {/* Header */}
-        <div className="border-b border-[#eaeae5] pb-4 flex flex-col sm:flex-row sm:items-end justify-between gap-3">
+        {/* Editorial Greeting Header */}
+        <div className="border-b border-[#eaeae5] pb-5 flex flex-col sm:flex-row sm:items-end justify-between gap-4">
           <div>
-            <span className="text-[10px] tracking-[0.25em] uppercase text-[#73726c] font-mono">
-              STAFF OS / PRESENCE
-            </span>
-            <h1 className="text-2xl sm:text-3xl font-light tracking-tight mt-1">
-              STORE <span className="font-serif italic font-normal">ATTENDANCE</span>
+            <div className="flex items-center space-x-2">
+              <span className="text-[10px] tracking-[0.25em] uppercase text-[#73726c] font-mono">
+                STAFF OS / PRESENCE
+              </span>
+              <span className="w-1 h-1 rounded-full bg-[#73726c]" />
+              <span className="text-[10px] uppercase font-mono px-1.5 py-0.5 bg-neutral-100 text-[#171716]">
+                {profile?.role || 'STAFF'}
+              </span>
+              {profile?.employee_code && (
+                <span className="text-[10px] uppercase font-mono text-[#73726c]">
+                  #{profile.employee_code}
+                </span>
+              )}
+            </div>
+            <h1 className="text-2xl sm:text-3xl font-light tracking-tight mt-1.5">
+              WELCOME, <span className="font-serif italic font-normal">{firstName}</span>
             </h1>
+            <p className="text-xs text-[#73726c] mt-0.5 font-sans">
+              Take your check-in selfie to mark today&apos;s shift presence.
+            </p>
           </div>
 
-          <div className="text-right">
-            <span className="text-[10px] uppercase tracking-wider text-[#73726c] block">
-              SCHEDULED SHIFT
+          <div className="text-left sm:text-right bg-white sm:bg-transparent p-3 sm:p-0 border sm:border-0 border-[#eaeae5]">
+            <span className="text-[9px] uppercase tracking-widest text-[#73726c] font-mono block">
+              BALI TIME
             </span>
-            <span className="text-xs font-mono font-medium text-[#171716]">
-              {scheduledStart} — {scheduledEnd}
+            <span className="text-base sm:text-lg font-mono font-medium text-[#171716] block">
+              {currentTimeStr || '00:00:00'}
+            </span>
+            <span className="text-[10px] text-[#73726c] font-mono block mt-0.5">
+              Shift: {scheduledStart} — {scheduledEnd}
             </span>
           </div>
         </div>
 
-        {/* Location & Store Info Strip */}
-        <div className="bg-white border border-[#eaeae5] p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
-          <div>
-            <span className="text-[10px] uppercase tracking-wider text-[#73726c] block">
-              ASSIGNED STORE
-            </span>
-            <span className="font-medium text-[#171716]">
-              {assignedStore?.name || 'Office / Headquarter'}
-            </span>
+        {/* Store & Street Location Status Strip */}
+        <div className="bg-white border border-[#eaeae5] p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs shadow-[0_1px_3px_rgba(0,0,0,0.02)]">
+          <div className="flex items-center space-x-3">
+            <div className="w-8 h-8 rounded-full bg-neutral-100 flex items-center justify-center text-xs font-mono font-medium">
+              ✦
+            </div>
+            <div>
+              <span className="text-[10px] uppercase tracking-wider text-[#73726c] block">
+                ASSIGNED OUTLET
+              </span>
+              <span className="font-medium text-[#171716] text-xs">{storeDisplay}</span>
+            </div>
           </div>
 
-          <div className="sm:text-right max-w-sm">
+          <div className="sm:text-right max-w-md">
             <span className="text-[10px] uppercase tracking-wider text-[#73726c] block">
               DETECTED LOCATION
             </span>
@@ -473,21 +528,32 @@ export default function AttendancePage() {
           </div>
         </div>
 
-        {/* Attendance Action Box */}
-        <div className="bg-white border border-[#eaeae5] p-6 space-y-6">
-          {/* Selfie Box */}
+        {/* Camera Terminal Container */}
+        <div className="bg-white border border-[#eaeae5] p-6 sm:p-8 space-y-6 shadow-sm">
           <div className="flex flex-col items-center justify-center space-y-4">
-            <div className="relative w-64 h-64 bg-[#fbfbf9] border border-[#eaeae5] flex items-center justify-center overflow-hidden">
+            {/* Viewfinder Frame */}
+            <div className="relative w-64 h-64 bg-[#f8f8f6] border border-[#e5e5df] flex items-center justify-center overflow-hidden group">
+              {/* Corner Reticles */}
+              <div className="absolute top-2 left-2 w-3 h-3 border-t border-l border-neutral-400 pointer-events-none" />
+              <div className="absolute top-2 right-2 w-3 h-3 border-t border-r border-neutral-400 pointer-events-none" />
+              <div className="absolute bottom-2 left-2 w-3 h-3 border-b border-l border-neutral-400 pointer-events-none" />
+              <div className="absolute bottom-2 right-2 w-3 h-3 border-b border-r border-neutral-400 pointer-events-none" />
+
               {cameraActive ? (
                 <video ref={videoRef} playsInline autoPlay className="w-full h-full object-cover" />
               ) : capturedPhoto ? (
                 <Image src={capturedPhoto} alt="Verification Selfie" fill className="object-cover" />
               ) : (
-                <div className="text-center p-4">
+                <div className="text-center p-6 space-y-1.5">
+                  <div className="w-10 h-10 rounded-full bg-neutral-100 mx-auto flex items-center justify-center text-neutral-400 text-sm mb-2">
+                    📷
+                  </div>
                   <span className="text-[10px] uppercase tracking-widest text-[#73726c] font-mono block">
                     CAMERA VERIFICATION
                   </span>
-                  <p className="text-xs text-[#73726c] mt-1">Take a selfie to verify check-in</p>
+                  <p className="text-xs text-[#73726c]">
+                    Look straight and snap a quick selfie to verify check-in
+                  </p>
                 </div>
               )}
             </div>
@@ -499,16 +565,16 @@ export default function AttendancePage() {
                 <button
                   onClick={startCamera}
                   disabled={loading}
-                  className="px-4 py-2 bg-black text-white text-xs uppercase tracking-wider hover:bg-neutral-800 disabled:opacity-30 transition"
+                  className="px-5 py-2.5 bg-[#171716] text-white text-xs uppercase tracking-widest hover:bg-neutral-800 disabled:opacity-30 transition flex items-center space-x-2"
                 >
-                  Start Camera
+                  <span>Start Camera</span>
                 </button>
               )}
 
               {cameraActive && (
                 <button
                   onClick={captureSnapshot}
-                  className="px-4 py-2 bg-black text-white text-xs uppercase tracking-wider hover:bg-neutral-800 transition"
+                  className="px-6 py-2.5 bg-black text-white text-xs uppercase tracking-widest hover:bg-neutral-800 transition"
                 >
                   Snap Selfie
                 </button>
@@ -517,7 +583,7 @@ export default function AttendancePage() {
               {capturedPhoto && !cameraActive && !todayRecord?.clock_out_at && (
                 <button
                   onClick={retakePhoto}
-                  className="px-3.5 py-1.5 border border-[#eaeae5] text-xs uppercase tracking-wider text-[#73726c] hover:text-black transition"
+                  className="px-4 py-2 border border-[#eaeae5] text-xs uppercase tracking-wider text-[#73726c] hover:text-black transition"
                 >
                   Retake Photo
                 </button>
@@ -526,14 +592,14 @@ export default function AttendancePage() {
           </div>
 
           {/* Action Trigger */}
-          <div className="border-t border-[#eaeae5] pt-5 space-y-4">
+          <div className="border-t border-[#eaeae5] pt-5 space-y-3">
             {!todayRecord?.clock_in_at ? (
               <button
                 onClick={handleClockIn}
                 disabled={submitting || !capturedPhoto}
                 className="w-full py-3.5 bg-[#171716] hover:bg-neutral-800 disabled:bg-neutral-200 disabled:text-neutral-400 text-white text-xs uppercase tracking-widest transition"
               >
-                {submitting ? 'Recording Clock In...' : 'Verify & Clock In'}
+                {submitting ? 'Recording Presence...' : 'Verify & Clock In'}
               </button>
             ) : !todayRecord?.clock_out_at ? (
               <button
@@ -555,7 +621,8 @@ export default function AttendancePage() {
                   ✓ Shift Finished for Today
                 </span>
                 <p className="text-[#73726c] text-[11px] mt-0.5">
-                  Clock in: {formatTime(todayRecord.clock_in_at)} — Clock out: {formatTime(todayRecord.clock_out_at)}
+                  Clock in: {formatTime(todayRecord.clock_in_at)} — Clock out:{' '}
+                  {formatTime(todayRecord.clock_out_at)}
                 </p>
               </div>
             )}
@@ -566,19 +633,19 @@ export default function AttendancePage() {
           </div>
         </div>
 
-        {/* My Attendance History */}
+        {/* My Attendance History Table */}
         <div id="history" className="bg-white border border-[#eaeae5] overflow-hidden">
           <div className="p-4 border-b border-[#eaeae5] bg-[#fbfbf9]/60 flex justify-between items-center">
             <div>
               <span className="text-xs uppercase tracking-wider font-medium text-[#171716]">
-                My Attendance History
+                My Shift Logbook
               </span>
               <p className="text-[11px] text-[#73726c]">
-                Your recent clock-in timestamps, punctuality ratings, and hours worked.
+                Your recent attendance records, punctuality status, and handover notes.
               </p>
             </div>
             <span className="text-[11px] font-mono text-[#73726c]">
-              {historyRecords.length} Shifts Logged
+              {historyRecords.length} Shifts
             </span>
           </div>
 
@@ -605,7 +672,8 @@ export default function AttendancePage() {
                   historyRecords.map((r) => {
                     let totalHours = '--'
                     if (r.clock_in_at && r.clock_out_at) {
-                      const diffMs = new Date(r.clock_out_at).getTime() - new Date(r.clock_in_at).getTime()
+                      const diffMs =
+                        new Date(r.clock_out_at).getTime() - new Date(r.clock_in_at).getTime()
                       const hrs = Math.floor(diffMs / (1000 * 60 * 60))
                       const mins = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60))
                       totalHours = `${hrs}h ${mins}m`
@@ -619,11 +687,11 @@ export default function AttendancePage() {
                         </td>
                         <td className="p-3.5 whitespace-nowrap">
                           {r.punctuality_status === 'late' ? (
-                            <span className="inline-block text-[9px] uppercase px-2 py-0.5 bg-rose-50 text-rose-800 border border-rose-200">
+                            <span className="inline-block text-[9px] uppercase px-2 py-0.5 bg-rose-50 text-rose-800 border border-rose-200 font-mono">
                               Late ({r.late_minutes || 0}m)
                             </span>
                           ) : r.clock_in_at ? (
-                            <span className="inline-block text-[9px] uppercase px-2 py-0.5 bg-emerald-50 text-emerald-800 border border-emerald-200">
+                            <span className="inline-block text-[9px] uppercase px-2 py-0.5 bg-emerald-50 text-emerald-800 border border-emerald-200 font-mono">
                               On-Time
                             </span>
                           ) : (
