@@ -89,7 +89,7 @@ export default function AttendancePage() {
     return () => clearInterval(interval)
   }, [])
 
-  // Convert Coordinates to Human Readable Address (OpenStreetMap Nominatim)
+  // Convert Coordinates to Address
   const fetchAddressFromCoords = async (lat: number, lng: number): Promise<string> => {
     try {
       const response = await fetch(
@@ -122,7 +122,7 @@ export default function AttendancePage() {
         return
       }
 
-      // Fetch profile with assigned store
+      // Fetch profile
       const { data: profData } = await supabase
         .from('profiles')
         .select('id, full_name, email, role, employee_code, store_id, stores(id, name)')
@@ -188,7 +188,7 @@ export default function AttendancePage() {
         setTodayRecord(attData as AttendanceRecord)
       }
 
-      // Fetch User's Attendance History (last 15 records)
+      // Fetch History
       const { data: historyData } = await supabase
         .from('attendance')
         .select('*')
@@ -202,7 +202,7 @@ export default function AttendancePage() {
 
       if (isMounted) setLoading(false)
 
-      // Geolocation resolution
+      // Geolocation
       if (typeof window !== 'undefined' && 'geolocation' in navigator) {
         if (isMounted) setDetectingLocation(true)
         navigator.geolocation.getCurrentPosition(
@@ -242,7 +242,7 @@ export default function AttendancePage() {
     }
   }, [router])
 
-  // Camera handling
+  // Camera Handling
   const startCamera = async () => {
     setCapturedPhoto(null)
     setCameraActive(true)
@@ -256,7 +256,7 @@ export default function AttendancePage() {
         videoRef.current.play()
       }
     } catch {
-      setStatusMessage('Camera access was denied. Please allow camera permissions.')
+      setStatusMessage('Camera access was denied. Please allow permissions.')
       setCameraActive(false)
     }
   }
@@ -354,7 +354,7 @@ export default function AttendancePage() {
     }
 
     setSubmitting(true)
-    setStatusMessage('Uploading selfie & saving location...')
+    setStatusMessage('Synchronizing presence & location...')
 
     let finalAddress = detectedAddress
     if (!finalAddress && currentCoords) {
@@ -399,8 +399,8 @@ export default function AttendancePage() {
       setCapturedPhoto(null)
       alert(
         punctualityStatus === 'late'
-          ? `Clocked in successfully. Marked as LATE (${lateMinutes} mins). Shift was ${scheduledStart}.`
-          : `Clocked in successfully. Status: ON-TIME (${scheduledStart} Shift). Have a great shift!`
+          ? `Clocked in successfully. Marked as LATE (${lateMinutes} mins).`
+          : `Clocked in successfully. Status: ON-TIME. Have an inspiring shift!`
       )
     }
   }
@@ -451,7 +451,7 @@ export default function AttendancePage() {
         ...prev.filter((r) => r.id !== data.id),
       ])
       setCapturedPhoto(null)
-      alert('Shift finished and handover note saved successfully.')
+      alert('Shift completed and handover note saved.')
     }
   }
 
@@ -462,97 +462,108 @@ export default function AttendancePage() {
   const storeDisplay = assignedStore?.name || 'Office / Headquarter'
 
   return (
-    <main className="min-h-screen bg-[#fafaf8] pb-32 md:pb-16 text-[#171716]">
+    <main className="min-h-screen bg-[#F7F5F0] pb-32 md:pb-16 text-[#1A1A18]">
       <StaffNav userRole={profile?.role} />
 
       <div className="max-w-3xl mx-auto px-4 pt-6 md:pt-8 space-y-6">
-        {/* Editorial Greeting Header */}
-        <div className="border-b border-[#eaeae5] pb-5 flex flex-col sm:flex-row sm:items-end justify-between gap-4">
-          <div>
-            <div className="flex items-center space-x-2">
-              <span className="text-[10px] tracking-[0.25em] uppercase text-[#73726c] font-mono">
-                STAFF OS / PRESENCE
-              </span>
-              <span className="w-1 h-1 rounded-full bg-[#73726c]" />
-              <span className="text-[10px] uppercase font-mono px-1.5 py-0.5 bg-neutral-100 text-[#171716]">
-                {profile?.role || 'STAFF'}
-              </span>
-              {profile?.employee_code && (
-                <span className="text-[10px] uppercase font-mono text-[#73726c]">
-                  #{profile.employee_code}
-                </span>
-              )}
-            </div>
-            <h1 className="text-2xl sm:text-3xl font-light tracking-tight mt-1.5">
-              WELCOME, <span className="font-serif italic font-normal">{firstName}</span>
-            </h1>
-            <p className="text-xs text-[#73726c] mt-0.5 font-sans">
-              Take your check-in selfie to mark today&apos;s shift presence.
-            </p>
-          </div>
+        {/* Warm Boutique Header Hero */}
+        <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-[#1E2320] via-[#2A2E2B] to-[#1A1A18] text-white p-6 sm:p-7 shadow-lg border border-[#E3DDD1]">
+          {/* Subtle Ambient Glow */}
+          <div className="absolute top-0 right-0 w-56 h-56 bg-[#C26D53]/20 rounded-full blur-3xl pointer-events-none" />
+          <div className="absolute -bottom-10 -left-10 w-48 h-48 bg-[#947352]/20 rounded-full blur-2xl pointer-events-none" />
 
-          <div className="text-left sm:text-right bg-white sm:bg-transparent p-3 sm:p-0 border sm:border-0 border-[#eaeae5]">
-            <span className="text-[9px] uppercase tracking-widest text-[#73726c] font-mono block">
-              BALI TIME
-            </span>
-            <span className="text-base sm:text-lg font-mono font-medium text-[#171716] block">
-              {currentTimeStr || '00:00:00'}
-            </span>
-            <span className="text-[10px] text-[#73726c] font-mono block mt-0.5">
-              Shift: {scheduledStart} — {scheduledEnd}
-            </span>
+          <div className="relative z-10 flex flex-col sm:flex-row sm:items-end justify-between gap-5">
+            <div>
+              <div className="flex items-center space-x-2">
+                <span className="text-[10px] tracking-[0.3em] uppercase text-[#D8C7B5] font-mono">
+                  TWILM STAFF OS
+                </span>
+                <span className="w-1 h-1 rounded-full bg-[#C26D53]" />
+                <span className="text-[9px] uppercase font-mono px-2 py-0.5 rounded-full bg-white/10 text-white border border-white/15">
+                  {profile?.role || 'STAFF'}
+                </span>
+                {profile?.employee_code && (
+                  <span className="text-[10px] uppercase font-mono text-[#D8C7B5]">
+                    #{profile.employee_code}
+                  </span>
+                )}
+              </div>
+
+              <h1 className="text-2xl sm:text-3xl font-light tracking-tight mt-2 text-[#FAF7F2]">
+                WELCOME, <span className="font-serif italic font-normal text-[#E8C5A8]">{firstName}</span>
+              </h1>
+              <p className="text-xs text-[#B3AEA6] mt-1">
+                Record your attendance selfie for today&apos;s shift.
+              </p>
+            </div>
+
+            {/* Time & Shift Pill */}
+            <div className="bg-white/5 backdrop-blur-md rounded-xl p-3 sm:p-4 border border-white/10 text-left sm:text-right min-w-[180px]">
+              <div className="flex items-center sm:justify-end space-x-1.5 mb-0.5">
+                <span className="w-1.5 h-1.5 rounded-full bg-[#C26D53] animate-ping" />
+                <span className="text-[9px] uppercase tracking-widest text-[#D8C7B5] font-mono">
+                  BALI WITA
+                </span>
+              </div>
+              <span className="text-xl sm:text-2xl font-mono font-light text-white tracking-tight block">
+                {currentTimeStr || '00:00:00'}
+              </span>
+              <span className="text-[11px] font-mono text-[#C2B7A8] block mt-1">
+                Shift: {scheduledStart} — {scheduledEnd}
+              </span>
+            </div>
           </div>
         </div>
 
-        {/* Store & Street Location Status Strip */}
-        <div className="bg-white border border-[#eaeae5] p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs shadow-[0_1px_3px_rgba(0,0,0,0.02)]">
-          <div className="flex items-center space-x-3">
-            <div className="w-8 h-8 rounded-full bg-neutral-100 flex items-center justify-center text-xs font-mono font-medium">
-              ✦
+        {/* Location & Assigned Outlet Card */}
+        <div className="rounded-xl bg-white border border-[#E8E2D5] p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs shadow-sm">
+          <div className="flex items-center space-x-3.5">
+            <div className="w-10 h-10 rounded-xl bg-[#FBF0EC] border border-[#F2D7CE] flex items-center justify-center text-[#C26D53] text-sm shadow-xs">
+              📍
             </div>
             <div>
-              <span className="text-[10px] uppercase tracking-wider text-[#73726c] block">
-                ASSIGNED OUTLET
+              <span className="text-[10px] uppercase tracking-wider text-[#8A857C] font-mono block">
+                STORE ASSIGNMENT
               </span>
-              <span className="font-medium text-[#171716] text-xs">{storeDisplay}</span>
+              <span className="font-medium text-[#1A1A18] text-sm tracking-tight">{storeDisplay}</span>
             </div>
           </div>
 
-          <div className="sm:text-right max-w-md">
-            <span className="text-[10px] uppercase tracking-wider text-[#73726c] block">
-              DETECTED LOCATION
+          <div className="sm:text-right max-w-md bg-[#FAF8F5] sm:bg-transparent p-2.5 sm:p-0 rounded-lg sm:rounded-none border sm:border-0 border-[#E8E2D5]">
+            <span className="text-[10px] uppercase tracking-wider text-[#8A857C] font-mono block">
+              DETECTED STREET ADDRESS
             </span>
-            <span className="font-mono text-[11px] text-[#171716] truncate block">
+            <span className="font-mono text-[11px] text-[#423E37] truncate block mt-0.5">
               {detectingLocation ? 'Resolving street address...' : detectedAddress || 'GPS locked'}
             </span>
           </div>
         </div>
 
         {/* Camera Terminal Container */}
-        <div className="bg-white border border-[#eaeae5] p-6 sm:p-8 space-y-6 shadow-sm">
-          <div className="flex flex-col items-center justify-center space-y-4">
-            {/* Viewfinder Frame */}
-            <div className="relative w-64 h-64 bg-[#f8f8f6] border border-[#e5e5df] flex items-center justify-center overflow-hidden group">
-              {/* Corner Reticles */}
-              <div className="absolute top-2 left-2 w-3 h-3 border-t border-l border-neutral-400 pointer-events-none" />
-              <div className="absolute top-2 right-2 w-3 h-3 border-t border-r border-neutral-400 pointer-events-none" />
-              <div className="absolute bottom-2 left-2 w-3 h-3 border-b border-l border-neutral-400 pointer-events-none" />
-              <div className="absolute bottom-2 right-2 w-3 h-3 border-b border-r border-neutral-400 pointer-events-none" />
+        <div className="rounded-2xl bg-white border border-[#E8E2D5] p-6 sm:p-8 space-y-6 shadow-sm">
+          <div className="flex flex-col items-center justify-center space-y-5">
+            {/* Viewfinder Frame with Terracotta Accents */}
+            <div className="relative w-64 h-64 rounded-2xl bg-[#FAF8F5] border-2 border-dashed border-[#D6CEC0] flex items-center justify-center overflow-hidden shadow-inner group">
+              {/* Boutique Viewfinder Reticles */}
+              <div className="absolute top-3 left-3 w-4 h-4 border-t-2 border-l-2 border-[#C26D53] pointer-events-none" />
+              <div className="absolute top-3 right-3 w-4 h-4 border-t-2 border-r-2 border-[#C26D53] pointer-events-none" />
+              <div className="absolute bottom-3 left-3 w-4 h-4 border-b-2 border-l-2 border-[#C26D53] pointer-events-none" />
+              <div className="absolute bottom-3 right-3 w-4 h-4 border-b-2 border-r-2 border-[#C26D53] pointer-events-none" />
 
               {cameraActive ? (
                 <video ref={videoRef} playsInline autoPlay className="w-full h-full object-cover" />
               ) : capturedPhoto ? (
                 <Image src={capturedPhoto} alt="Verification Selfie" fill className="object-cover" />
               ) : (
-                <div className="text-center p-6 space-y-1.5">
-                  <div className="w-10 h-10 rounded-full bg-neutral-100 mx-auto flex items-center justify-center text-neutral-400 text-sm mb-2">
-                    📷
+                <div className="text-center p-6 space-y-2">
+                  <div className="w-12 h-12 rounded-full bg-[#FBF0EC] text-[#C26D53] mx-auto flex items-center justify-center text-lg border border-[#F2D7CE] shadow-xs">
+                    ✦
                   </div>
-                  <span className="text-[10px] uppercase tracking-widest text-[#73726c] font-mono block">
+                  <span className="text-[10px] uppercase tracking-widest text-[#8A857C] font-mono block">
                     CAMERA VERIFICATION
                   </span>
-                  <p className="text-xs text-[#73726c]">
-                    Look straight and snap a quick selfie to verify check-in
+                  <p className="text-xs text-[#736E66] max-w-[180px] mx-auto leading-relaxed">
+                    Take a clear selfie to mark your shift entry
                   </p>
                 </div>
               )}
@@ -565,7 +576,7 @@ export default function AttendancePage() {
                 <button
                   onClick={startCamera}
                   disabled={loading}
-                  className="px-5 py-2.5 bg-[#171716] text-white text-xs uppercase tracking-widest hover:bg-neutral-800 disabled:opacity-30 transition flex items-center space-x-2"
+                  className="px-6 py-2.5 rounded-full bg-[#1A1A18] text-white text-xs uppercase tracking-widest hover:bg-[#C26D53] disabled:opacity-30 transition-all duration-200 shadow-sm flex items-center space-x-2"
                 >
                   <span>Start Camera</span>
                 </button>
@@ -574,7 +585,7 @@ export default function AttendancePage() {
               {cameraActive && (
                 <button
                   onClick={captureSnapshot}
-                  className="px-6 py-2.5 bg-black text-white text-xs uppercase tracking-widest hover:bg-neutral-800 transition"
+                  className="px-7 py-2.5 rounded-full bg-[#C26D53] text-white text-xs uppercase tracking-widest hover:bg-[#AD5E46] transition-all duration-200 shadow-md animate-pulse"
                 >
                   Snap Selfie
                 </button>
@@ -583,7 +594,7 @@ export default function AttendancePage() {
               {capturedPhoto && !cameraActive && !todayRecord?.clock_out_at && (
                 <button
                   onClick={retakePhoto}
-                  className="px-4 py-2 border border-[#eaeae5] text-xs uppercase tracking-wider text-[#73726c] hover:text-black transition"
+                  className="px-4 py-2 rounded-full border border-[#D6CEC0] bg-[#FAF8F5] text-xs uppercase tracking-wider text-[#635E56] hover:text-[#1A1A18] hover:border-[#1A1A18] transition"
                 >
                   Retake Photo
                 </button>
@@ -592,12 +603,12 @@ export default function AttendancePage() {
           </div>
 
           {/* Action Trigger */}
-          <div className="border-t border-[#eaeae5] pt-5 space-y-3">
+          <div className="border-t border-[#E8E2D5] pt-5 space-y-3">
             {!todayRecord?.clock_in_at ? (
               <button
                 onClick={handleClockIn}
                 disabled={submitting || !capturedPhoto}
-                className="w-full py-3.5 bg-[#171716] hover:bg-neutral-800 disabled:bg-neutral-200 disabled:text-neutral-400 text-white text-xs uppercase tracking-widest transition"
+                className="w-full py-4 rounded-xl bg-[#1A1A18] hover:bg-[#C26D53] disabled:bg-[#E8E2D5] disabled:text-[#A39E94] text-white text-xs uppercase tracking-[0.2em] font-medium transition-all duration-300 shadow-sm disabled:shadow-none"
               >
                 {submitting ? 'Recording Presence...' : 'Verify & Clock In'}
               </button>
@@ -611,16 +622,16 @@ export default function AttendancePage() {
                   setShowHandoverModal(true)
                 }}
                 disabled={submitting}
-                className="w-full py-3.5 bg-[#171716] hover:bg-neutral-800 disabled:bg-neutral-200 text-white text-xs uppercase tracking-widest transition"
+                className="w-full py-4 rounded-xl bg-[#2E473B] hover:bg-[#23382D] disabled:bg-[#E8E2D5] text-white text-xs uppercase tracking-[0.2em] font-medium transition-all duration-300 shadow-sm"
               >
                 Proceed to Shift Handover & Clock Out
               </button>
             ) : (
-              <div className="p-4 bg-[#fbfbf9] text-center border border-[#eaeae5] text-xs">
-                <span className="font-medium text-emerald-800 uppercase tracking-wide">
+              <div className="p-4 rounded-xl bg-[#EDF4F0] text-center border border-[#CFE2D7] text-xs">
+                <span className="font-medium text-[#2E473B] uppercase tracking-wider text-[11px] block">
                   ✓ Shift Finished for Today
                 </span>
-                <p className="text-[#73726c] text-[11px] mt-0.5">
+                <p className="text-[#5B7869] text-[11px] font-mono mt-0.5">
                   Clock in: {formatTime(todayRecord.clock_in_at)} — Clock out:{' '}
                   {formatTime(todayRecord.clock_out_at)}
                 </p>
@@ -628,30 +639,30 @@ export default function AttendancePage() {
             )}
 
             {statusMessage && (
-              <p className="text-[11px] text-center text-[#73726c] font-mono">{statusMessage}</p>
+              <p className="text-[11px] text-center text-[#8A857C] font-mono">{statusMessage}</p>
             )}
           </div>
         </div>
 
         {/* My Attendance History Table */}
-        <div id="history" className="bg-white border border-[#eaeae5] overflow-hidden">
-          <div className="p-4 border-b border-[#eaeae5] bg-[#fbfbf9]/60 flex justify-between items-center">
+        <div id="history" className="rounded-2xl bg-white border border-[#E8E2D5] overflow-hidden shadow-sm">
+          <div className="p-4 sm:p-5 border-b border-[#E8E2D5] bg-[#FAF8F5] flex justify-between items-center">
             <div>
-              <span className="text-xs uppercase tracking-wider font-medium text-[#171716]">
+              <span className="text-xs uppercase tracking-wider font-semibold text-[#1A1A18]">
                 My Shift Logbook
               </span>
-              <p className="text-[11px] text-[#73726c]">
-                Your recent attendance records, punctuality status, and handover notes.
+              <p className="text-[11px] text-[#8A857C]">
+                Your personal check-in history and punctuality badges.
               </p>
             </div>
-            <span className="text-[11px] font-mono text-[#73726c]">
-              {historyRecords.length} Shifts
+            <span className="text-[10px] font-mono px-2.5 py-1 rounded-full bg-[#EAE5DA] text-[#4A453E]">
+              {historyRecords.length} Shifts Recorded
             </span>
           </div>
 
           <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs text-[#171716]">
-              <thead className="bg-[#fbfbf9] text-[10px] uppercase tracking-wider text-[#73726c] border-b border-[#eaeae5]">
+            <table className="w-full text-left text-xs text-[#1A1A18]">
+              <thead className="bg-[#FAF8F5] text-[10px] uppercase tracking-wider text-[#8A857C] border-b border-[#E8E2D5]">
                 <tr>
                   <th className="p-3.5">Date</th>
                   <th className="p-3.5">Clock In</th>
@@ -661,10 +672,10 @@ export default function AttendancePage() {
                   <th className="p-3.5">Handover Notes</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-[#eaeae5]">
+              <tbody className="divide-y divide-[#E8E2D5]">
                 {historyRecords.length === 0 ? (
                   <tr>
-                    <td colSpan={6} className="p-6 text-center text-xs text-[#73726c]">
+                    <td colSpan={6} className="p-6 text-center text-xs text-[#8A857C]">
                       No previous shifts recorded yet.
                     </td>
                   </tr>
@@ -680,30 +691,30 @@ export default function AttendancePage() {
                     }
 
                     return (
-                      <tr key={r.id} className="hover:bg-[#fbfbf9]/50 transition-colors">
-                        <td className="p-3.5 font-mono text-xs whitespace-nowrap">{r.work_date}</td>
-                        <td className="p-3.5 font-mono text-xs whitespace-nowrap">
+                      <tr key={r.id} className="hover:bg-[#FAF8F5]/80 transition-colors">
+                        <td className="p-3.5 font-mono text-xs whitespace-nowrap text-[#4A453E]">{r.work_date}</td>
+                        <td className="p-3.5 font-mono text-xs whitespace-nowrap font-medium">
                           {formatTime(r.clock_in_at)}
                         </td>
                         <td className="p-3.5 whitespace-nowrap">
                           {r.punctuality_status === 'late' ? (
-                            <span className="inline-block text-[9px] uppercase px-2 py-0.5 bg-rose-50 text-rose-800 border border-rose-200 font-mono">
+                            <span className="inline-block text-[9px] uppercase px-2 py-0.5 rounded-md bg-[#FDE8E8] text-[#9B1C1C] border border-[#F8B4B4] font-mono font-medium">
                               Late ({r.late_minutes || 0}m)
                             </span>
                           ) : r.clock_in_at ? (
-                            <span className="inline-block text-[9px] uppercase px-2 py-0.5 bg-emerald-50 text-emerald-800 border border-emerald-200 font-mono">
+                            <span className="inline-block text-[9px] uppercase px-2 py-0.5 rounded-md bg-[#EDF4F0] text-[#2E473B] border border-[#CFE2D7] font-mono font-medium">
                               On-Time
                             </span>
                           ) : (
-                            <span className="text-[#8c8b85]">--</span>
+                            <span className="text-[#A39E94]">--</span>
                           )}
                         </td>
                         <td className="p-3.5 font-mono text-xs whitespace-nowrap">
                           {formatTime(r.clock_out_at)}
                         </td>
                         <td className="p-3.5 font-mono text-xs whitespace-nowrap">{totalHours}</td>
-                        <td className="p-3.5 text-[11px] text-[#73726c] max-w-xs truncate">
-                          {r.handover_notes || <span className="text-[#8c8b85] italic">None</span>}
+                        <td className="p-3.5 text-[11px] text-[#736E66] max-w-xs truncate">
+                          {r.handover_notes || <span className="text-[#A39E94] italic">None</span>}
                         </td>
                       </tr>
                     )
@@ -716,23 +727,23 @@ export default function AttendancePage() {
 
         {/* Shift Handover Modal */}
         {showHandoverModal && (
-          <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
-            <div className="bg-white border border-[#eaeae5] max-w-lg w-full p-6 space-y-4 shadow-xl">
+          <div className="fixed inset-0 z-50 bg-[#1A1A18]/60 backdrop-blur-sm flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl border border-[#E8E2D5] max-w-lg w-full p-6 space-y-4 shadow-2xl">
               <div>
-                <span className="text-[10px] uppercase tracking-widest text-[#73726c] font-mono block">
+                <span className="text-[10px] uppercase tracking-widest text-[#C26D53] font-mono block">
                   END OF SHIFT
                 </span>
-                <h2 className="text-xl font-light tracking-tight mt-0.5">
-                  Shift Handover <span className="font-serif italic font-normal">Logbook</span>
+                <h2 className="text-xl font-light tracking-tight mt-0.5 text-[#1A1A18]">
+                  Shift Handover <span className="font-serif italic font-normal text-[#947352]">Logbook</span>
                 </h2>
-                <p className="text-xs text-[#73726c] mt-1">
+                <p className="text-xs text-[#736E66] mt-1">
                   Leave brief notes for the next shift associate and note the cash balance.
                 </p>
               </div>
 
               <div className="space-y-3">
                 <div>
-                  <label className="text-[10px] uppercase tracking-wider text-[#73726c] block mb-1">
+                  <label className="text-[10px] uppercase tracking-wider text-[#8A857C] font-mono block mb-1">
                     Store Handover Notes
                   </label>
                   <textarea
@@ -740,12 +751,12 @@ export default function AttendancePage() {
                     value={handoverNote}
                     onChange={(e) => setHandoverNote(e.target.value)}
                     placeholder="Customer reservations, fitting room checks, restock needed..."
-                    className="w-full p-2.5 text-xs bg-[#fbfbf9] border border-[#eaeae5] text-[#171716] focus:outline-none resize-none"
+                    className="w-full p-3 text-xs rounded-xl bg-[#FAF8F5] border border-[#E8E2D5] text-[#1A1A18] focus:outline-none focus:border-[#C26D53] resize-none"
                   />
                 </div>
 
                 <div>
-                  <label className="text-[10px] uppercase tracking-wider text-[#73726c] block mb-1">
+                  <label className="text-[10px] uppercase tracking-wider text-[#8A857C] font-mono block mb-1">
                     Closing Cash Drawer / Petty Cash (Optional)
                   </label>
                   <input
@@ -753,16 +764,16 @@ export default function AttendancePage() {
                     value={cashBalance}
                     onChange={(e) => setCashBalance(e.target.value)}
                     placeholder="e.g. IDR 1.500.000 / Balanced"
-                    className="w-full p-2 text-xs bg-[#fbfbf9] border border-[#eaeae5] text-[#171716] focus:outline-none font-mono"
+                    className="w-full p-2.5 text-xs rounded-xl bg-[#FAF8F5] border border-[#E8E2D5] text-[#1A1A18] focus:outline-none focus:border-[#C26D53] font-mono"
                   />
                 </div>
               </div>
 
-              <div className="flex items-center justify-end space-x-2 pt-2 border-t border-[#eaeae5]">
+              <div className="flex items-center justify-end space-x-2 pt-2 border-t border-[#E8E2D5]">
                 <button
                   type="button"
                   onClick={() => setShowHandoverModal(false)}
-                  className="px-4 py-2 border border-[#eaeae5] text-xs uppercase tracking-wider text-[#73726c] hover:text-black"
+                  className="px-4 py-2 text-xs uppercase tracking-wider text-[#736E66] hover:text-[#1A1A18] transition"
                 >
                   Back
                 </button>
@@ -770,7 +781,7 @@ export default function AttendancePage() {
                   type="button"
                   onClick={submitClockOut}
                   disabled={submitting}
-                  className="px-5 py-2 bg-black text-white text-xs uppercase tracking-widest hover:bg-neutral-800 disabled:opacity-40"
+                  className="px-5 py-2.5 rounded-full bg-[#1A1A18] hover:bg-[#2E473B] text-white text-xs uppercase tracking-widest disabled:opacity-40 transition-colors shadow-sm"
                 >
                   {submitting ? 'Submitting...' : 'Complete Clock Out'}
                 </button>
