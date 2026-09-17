@@ -18,46 +18,46 @@ export default function StaffNav({ userRole }: StaffNavProps) {
   }
 
   const navLinks = [
-    { href: '/dashboard', label: 'Overview', icon: '✦' },
+    { href: '/dashboard', label: 'Home', icon: '✦' },
     { href: '/attendance', label: 'Presence', icon: '⏱' },
-    { href: '/tasks', label: 'Rituals & Tasks', icon: '✓' },
+    { href: '/tasks', label: 'Rituals', icon: '✓' },
     { href: '/leave', label: 'Leave', icon: '◷' },
   ]
 
   return (
-    <header className="sticky top-0 z-40 bg-[#FAF8F5]/90 backdrop-blur-md border-b border-[#E8E2D5]">
-      {/* Top micro-banner */}
-      <div className="bg-[#191C1A] text-[#D8C7B5] px-4 py-1 text-[9px] uppercase tracking-[0.3em] font-mono flex justify-between items-center">
-        <span>TWILM ATELIER &amp; BOUTIQUES</span>
-        <span className="hidden sm:inline">BALI • STAFF OS 2.6</span>
+    <header className="sticky top-0 z-40 bg-[#FAF8F5]/95 backdrop-blur-md border-b border-[#E8E2D5] w-full">
+      {/* Micro-banner */}
+      <div className="bg-[#191C1A] text-[#D8C7B5] px-3 py-1 text-[8px] sm:text-[9px] uppercase tracking-[0.25em] font-mono flex justify-between items-center">
+        <span>TWILM ATELIER</span>
+        <span>BALI • OS 2.6</span>
       </div>
 
-      <div className="max-w-6xl mx-auto px-4 sm:px-6 h-14 flex items-center justify-between">
+      <div className="max-w-6xl mx-auto px-3 sm:px-6 h-13 sm:h-14 flex items-center justify-between gap-2">
         {/* Brand Mark */}
-        <Link href="/dashboard" className="flex items-center space-x-2 group">
-          <span className="w-6 h-6 rounded-full bg-[#191C1A] text-[#FAF8F5] flex items-center justify-center text-[10px] font-serif group-hover:bg-[#C26D53] transition-colors">
+        <Link href="/dashboard" className="flex items-center space-x-1.5 shrink-0">
+          <span className="w-5 h-5 rounded-full bg-[#191C1A] text-[#FAF8F5] flex items-center justify-center text-[9px] font-serif">
             T
           </span>
-          <span className="text-sm tracking-[0.25em] font-light text-[#191C1A] uppercase">
-            TWILM <span className="font-serif italic text-xs text-[#9E7B56]">OS</span>
+          <span className="text-xs tracking-[0.2em] font-light text-[#191C1A] uppercase">
+            TWILM
           </span>
         </Link>
 
-        {/* Navigation Items */}
-        <nav className="flex items-center space-x-1 sm:space-x-2">
+        {/* Scrollable Nav Bar for Mobile */}
+        <nav className="flex items-center space-x-1 overflow-x-auto no-scrollbar py-1">
           {navLinks.map((link) => {
             const isActive = pathname === link.href
             return (
               <Link
                 key={link.href}
                 href={link.href}
-                className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all ${
+                className={`px-2.5 py-1 rounded-full text-[11px] font-medium whitespace-nowrap transition-all shrink-0 ${
                   isActive
-                    ? 'bg-[#191C1A] text-[#FAF8F5] shadow-xs'
+                    ? 'bg-[#191C1A] text-[#FAF8F5]'
                     : 'text-[#6B665E] hover:text-[#191C1A] hover:bg-[#F2EFE8]'
                 }`}
               >
-                <span className="mr-1 text-[10px] opacity-70">{link.icon}</span>
+                <span className="mr-1 text-[9px] opacity-70">{link.icon}</span>
                 {link.label}
               </Link>
             )
@@ -66,10 +66,10 @@ export default function StaffNav({ userRole }: StaffNavProps) {
           {userRole === 'admin' && (
             <Link
               href="/admin"
-              className={`px-3 py-1.5 rounded-full text-xs font-mono uppercase tracking-wider transition-all ${
+              className={`px-2.5 py-1 rounded-full text-[10px] font-mono uppercase tracking-wider whitespace-nowrap shrink-0 transition-all ${
                 pathname === '/admin'
-                  ? 'bg-[#C26D53] text-white shadow-xs'
-                  : 'text-[#C26D53] bg-[#FBF0EC] border border-[#F2D7CE] hover:bg-[#C26D53] hover:text-white'
+                  ? 'bg-[#C26D53] text-white'
+                  : 'text-[#C26D53] bg-[#FBF0EC] border border-[#F2D7CE]'
               }`}
             >
               Admin
@@ -78,7 +78,7 @@ export default function StaffNav({ userRole }: StaffNavProps) {
 
           <button
             onClick={handleLogout}
-            className="ml-2 px-3 py-1 rounded-full border border-[#DCD6C8] text-[11px] text-[#827D73] hover:text-[#191C1A] hover:border-[#191C1A] transition"
+            className="px-2 py-0.5 rounded-full border border-[#DCD6C8] text-[10px] text-[#827D73] shrink-0"
           >
             Exit
           </button>

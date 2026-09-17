@@ -16,11 +16,12 @@ interface ProfileData {
   full_name: string | null
   email: string | null
   role: string
+  employee_code?: string | null
   store_id: string | null
   stores?: Store | Store[] | null
 }
 
-interface AttendanceToday {
+interface AttendanceRecord {
   id: string
   work_date: string
   clock_in_at: string | null
@@ -48,9 +49,11 @@ export default function AttendancePage() {
 
   const [profile, setProfile] = useState<ProfileData | null>(null)
   const [assignedStore, setAssignedStore] = useState<Store | null>(null)
-  const [todayRecord, setTodayRecord] = useState<AttendanceToday | null>(null)
+  const [todayRecord, setTodayRecord] = useState<AttendanceRecord | null>(null)
+  const [historyRecords, setHistoryRecords] = useState<AttendanceRecord[]>([])
   const [scheduledStart, setScheduledStart] = useState<string>('09:40')
   const [scheduledEnd, setScheduledEnd] = useState<string>('18:00')
+  const [currentTimeStr, setCurrentTimeStr] = useState<string>('')
 
   const [cameraActive, setCameraActive] = useState(false)
   const [capturedPhoto, setCapturedPhoto] = useState<string | null>(null)
@@ -58,7 +61,7 @@ export default function AttendancePage() {
   const [detectedAddress, setDetectedAddress] = useState<string>('')
   const [detectingLocation, setDetectingLocation] = useState<boolean>(false)
 
-  // Handover Modal State
+  // Handover Modal
   const [showHandoverModal, setShowHandoverModal] = useState(false)
   const [handoverNote, setHandoverNote] = useState('')
   const [cashBalance, setCashBalance] = useState('')
@@ -67,7 +70,24 @@ export default function AttendancePage() {
   const [submitting, setSubmitting] = useState(false)
   const [statusMessage, setStatusMessage] = useState<string>('')
 
-  // Convert Coordinates to Human Readable Address (OpenStreetMap Nominatim)
+  useEffect(() => {
+    const updateTime = () => {
+      const now = new Date()
+      setCurrentTimeStr(
+        new Intl.DateTimeFormat('en-GB', {
+          timeZone: 'Asia/Makassar',
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit',
+          hour12: false,
+        }).format(now)
+      )
+    }
+    updateTime()
+    const interval = setInterval(updateTime, 1000)
+    return () => clearInterval(interval)
+  }, [])
+
   const fetchAddressFromCoords = async (lat: number, lng: number): Promise<string> => {
     try {
       const response = await fetch(
@@ -100,18 +120,15 @@ export default function AttendancePage() {
         return
       }
 
-      // Fetch profile with assigned store
       const { data: profData } = await supabase
         .from('profiles')
-        .select('id, full_name, email, role, store_id, stores(id, name)')
+        .select('id, full_name, email, role, employee_code, store_id, stores(id, name)')
         .eq('id', session.user.id)
         .maybeSingle()
 
       let storeName = ''
       if (profData && isMounted) {
         setProfile(profData as unknown as ProfileData)
-        
-        // Handle single object or array return from join
         const resolvedStore = Array.isArray(profData.stores)
           ? (profData.stores[0] as Store | undefined)
           : (profData.stores as Store | null)
@@ -122,7 +139,6 @@ export default function AttendancePage() {
         }
       }
 
-      // Fetch today's schedule from Supabase
       const today = new Date().toISOString().split('T')[0]
       const { data: schData } = await supabase
         .from('schedules')
@@ -135,15 +151,16 @@ export default function AttendancePage() {
         setScheduledStart(schData.shift_start.slice(0, 5))
         setScheduledEnd(schData.shift_end.slice(0, 5))
       } else if (isMounted) {
-        // Automatic Shift Rule Detection
-        const isOffice = !storeName || storeName.includes('office') || storeName.includes('hq') || storeName.includes('headquarter')
+        const isOffice =
+          !storeName ||
+          storeName.includes('office') ||
+          storeName.includes('hq') ||
+          storeName.includes('headquarter')
 
         if (isOffice) {
-          // Office: 09:00 - 17:00
           setScheduledStart('09:00')
           setScheduledEnd('17:00')
         } else {
-          // Boutiques: Morning (09:40 - 18:00) vs Middle/Closing (11:40 - 20:00)
           const nowHour = new Date().getHours()
           if (nowHour >= 11) {
             setScheduledStart('11:40')
@@ -155,7 +172,6 @@ export default function AttendancePage() {
         }
       }
 
-      // Fetch today's attendance record
       const { data: attData } = await supabase
         .from('attendance')
         .select('*')
@@ -164,12 +180,22 @@ export default function AttendancePage() {
         .maybeSingle()
 
       if (attData && isMounted) {
-        setTodayRecord(attData as AttendanceToday)
+        setTodayRecord(attData as AttendanceRecord)
+      }
+
+      const { data: historyData } = await supabase
+        .from('attendance')
+        .select('*')
+        .eq('user_id', session.user.id)
+        .order('work_date', { ascending: false })
+        .limit(10)
+
+      if (historyData && isMounted) {
+        setHistoryRecords(historyData as AttendanceRecord[])
       }
 
       if (isMounted) setLoading(false)
 
-      // Geolocation resolution
       if (typeof window !== 'undefined' && 'geolocation' in navigator) {
         if (isMounted) setDetectingLocation(true)
         navigator.geolocation.getCurrentPosition(
@@ -189,16 +215,16 @@ export default function AttendancePage() {
             }
           },
           (err) => {
-            console.warn('Geolocation notice:', err.message)
+            console.warn('GPS Notice:', err.message)
             if (isMounted) {
-              setDetectedAddress('Location permission not granted')
+              setDetectedAddress('Location recorded without street address')
               setDetectingLocation(false)
             }
           },
           { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
         )
       } else if (isMounted) {
-        setDetectedAddress('Location not supported by device')
+        setDetectedAddress('Location not supported')
       }
     }
 
@@ -209,13 +235,12 @@ export default function AttendancePage() {
     }
   }, [router])
 
-  // Camera handling
   const startCamera = async () => {
     setCapturedPhoto(null)
     setCameraActive(true)
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 640 } },
+        video: { facingMode: 'user', width: { ideal: 480 }, height: { ideal: 480 } },
         audio: false,
       })
       if (videoRef.current) {
@@ -223,7 +248,7 @@ export default function AttendancePage() {
         videoRef.current.play()
       }
     } catch {
-      setStatusMessage('Camera access was denied. Please allow camera permissions.')
+      setStatusMessage('Camera permission denied.')
       setCameraActive(false)
     }
   }
@@ -232,11 +257,11 @@ export default function AttendancePage() {
     if (!videoRef.current || !canvasRef.current) return
     const video = videoRef.current
     const canvas = canvasRef.current
-    canvas.width = 480
-    canvas.height = 480
+    canvas.width = 400
+    canvas.height = 400
     const ctx = canvas.getContext('2d')
     if (ctx) {
-      ctx.drawImage(video, 0, 0, 480, 480)
+      ctx.drawImage(video, 0, 0, 400, 400)
       const dataUrl = canvas.toDataURL('image/jpeg', 0.8)
       setCapturedPhoto(dataUrl)
     }
@@ -251,7 +276,6 @@ export default function AttendancePage() {
     startCamera()
   }
 
-  // Upload photo to Supabase Storage
   const uploadPhoto = async (dataUrl: string, type: 'in' | 'out'): Promise<string | null> => {
     if (!profile) return null
     try {
@@ -282,7 +306,6 @@ export default function AttendancePage() {
     }
   }
 
-  // Calculate punctuality relative to scheduled start (+ 5 min grace period)
   const computePunctuality = () => {
     const now = new Date()
     const currentHour = now.getHours()
@@ -300,32 +323,15 @@ export default function AttendancePage() {
     return { status: 'on_time', minutes: 0 }
   }
 
-  // Calculate overtime relative to scheduled end
-  const computeOvertime = () => {
-    const now = new Date()
-    const currentHour = now.getHours()
-    const currentMin = now.getMinutes()
-    const totalCurrentMins = currentHour * 60 + currentMin
-
-    const [endH, endM] = scheduledEnd.split(':').map((v) => parseInt(v, 10))
-    const scheduledEndMins = endH * 60 + endM
-
-    if (totalCurrentMins > scheduledEndMins + 10) {
-      return totalCurrentMins - scheduledEndMins
-    }
-    return 0
-  }
-
-  // Execute Clock In
   const handleClockIn = async () => {
     if (!profile) return
     if (!capturedPhoto) {
-      alert('Please take a verification selfie first.')
+      alert('Please snap a selfie first.')
       return
     }
 
     setSubmitting(true)
-    setStatusMessage('Uploading selfie & saving location...')
+    setStatusMessage('Synchronizing presence...')
 
     let finalAddress = detectedAddress
     if (!finalAddress && currentCoords) {
@@ -360,19 +366,22 @@ export default function AttendancePage() {
     setSubmitting(false)
 
     if (error) {
-      alert('Failed to clock in: ' + error.message)
+      alert('Error: ' + error.message)
     } else if (data) {
-      setTodayRecord(data as AttendanceToday)
+      setTodayRecord(data as AttendanceRecord)
+      setHistoryRecords((prev) => [
+        data as AttendanceRecord,
+        ...prev.filter((r) => r.id !== data.id),
+      ])
       setCapturedPhoto(null)
       alert(
         punctualityStatus === 'late'
-          ? `Clocked in successfully. Marked as LATE (${lateMinutes} mins). Shift start was ${scheduledStart}.`
-          : `Clocked in successfully. Status: ON-TIME (${scheduledStart} Shift).`
+          ? `Clocked in (LATE: ${lateMinutes}m). Shift was ${scheduledStart}.`
+          : `Clocked in (ON-TIME). Have a wonderful shift!`
       )
     }
   }
 
-  // Execute Clock Out
   const submitClockOut = async () => {
     if (!profile || !todayRecord) return
     if (!capturedPhoto) {
@@ -388,7 +397,6 @@ export default function AttendancePage() {
     }
 
     const photoUrl = await uploadPhoto(capturedPhoto, 'out')
-    const overtimeMins = computeOvertime()
 
     const { data, error } = await supabase
       .from('attendance')
@@ -399,7 +407,6 @@ export default function AttendancePage() {
         clock_out_accuracy: currentCoords?.accuracy || null,
         clock_out_address: finalAddress || 'Location logged without street details',
         clock_out_photo_url: photoUrl,
-        overtime_minutes: overtimeMins,
         handover_notes: handoverNote.trim() || null,
         cash_drawer_balance: cashBalance.trim() || null,
       })
@@ -411,88 +418,110 @@ export default function AttendancePage() {
     setShowHandoverModal(false)
 
     if (error) {
-      alert('Failed to clock out: ' + error.message)
+      alert('Error: ' + error.message)
     } else if (data) {
-      setTodayRecord(data as AttendanceToday)
+      setTodayRecord(data as AttendanceRecord)
+      setHistoryRecords((prev) => [
+        data as AttendanceRecord,
+        ...prev.filter((r) => r.id !== data.id),
+      ])
       setCapturedPhoto(null)
-      alert('Shift completed and handover note saved successfully.')
+      alert('Shift completed!')
     }
   }
 
+  const formatTime = (ts: string | null) =>
+    ts ? new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '--:--'
+
+  const firstName = profile?.full_name?.split(' ')[0] || 'Associate'
+  const storeDisplay = assignedStore?.name || 'Office / Headquarter'
+
   return (
-    <main className="min-h-screen bg-[#fbfbf9] pb-32 md:pb-16 text-[#171716]">
+    <main className="min-h-screen bg-[#F7F5F0] pb-24 text-[#1A1A18] overflow-x-hidden">
       <StaffNav userRole={profile?.role} />
 
-      <div className="max-w-3xl mx-auto px-4 pt-6 md:pt-8 space-y-6">
-        {/* Header */}
-        <div className="border-b border-[#eaeae5] pb-4 flex flex-col sm:flex-row sm:items-end justify-between gap-3">
-          <div>
-            <span className="text-[10px] tracking-[0.25em] uppercase text-[#73726c] font-mono">
-              STAFF OS / PRESENCE
+      <div className="w-full max-w-xl mx-auto px-3.5 sm:px-6 pt-4 sm:pt-6 space-y-4">
+        {/* Mobile-Friendly Boutique Hero Card */}
+        <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-[#1E2320] via-[#2A2E2B] to-[#1A1A18] text-white p-4 sm:p-6 shadow-md border border-[#E3DDD1]">
+          <div className="relative z-10 space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-[8px] sm:text-[9px] tracking-[0.25em] uppercase text-[#D8C7B5] font-mono">
+                TWILM PRESENCE
+              </span>
+              <span className="text-[9px] font-mono text-[#D8C7B5] bg-white/10 px-2 py-0.5 rounded-full">
+                {currentTimeStr || '00:00:00'} WITA
+              </span>
+            </div>
+
+            <div>
+              <h1 className="text-xl sm:text-2xl font-light tracking-tight text-[#FAF7F2]">
+                WELCOME, <span className="font-serif italic text-[#E8C5A8]">{firstName}</span>
+              </h1>
+              <p className="text-[11px] text-[#B3AEA6] mt-0.5">
+                Shift: <span className="text-white font-mono">{scheduledStart} — {scheduledEnd}</span>
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {/* Store & Location Card */}
+        <div className="rounded-xl bg-white border border-[#E8E2D5] p-3.5 space-y-2 text-xs shadow-xs">
+          <div className="flex items-center justify-between">
+            <span className="text-[9px] uppercase tracking-wider text-[#8A857C] font-mono">
+              OUTLET
             </span>
-            <h1 className="text-2xl sm:text-3xl font-light tracking-tight mt-1">
-              STORE <span className="font-serif italic font-normal">ATTENDANCE</span>
-            </h1>
+            <span className="font-medium text-[#1A1A18] text-xs truncate max-w-[200px]">
+              {storeDisplay}
+            </span>
           </div>
 
-          <div className="text-right">
-            <span className="text-[10px] uppercase tracking-wider text-[#73726c] block">
-              SCHEDULED SHIFT
+          <div className="border-t border-[#E8E2D5]/60 pt-2 flex items-start justify-between gap-2">
+            <span className="text-[9px] uppercase tracking-wider text-[#8A857C] font-mono shrink-0">
+              LOCATION
             </span>
-            <span className="text-xs font-mono font-medium text-[#171716]">
-              {scheduledStart} — {scheduledEnd}
+            <span className="font-mono text-[10px] text-[#59544C] text-right line-clamp-2">
+              {detectingLocation ? 'Locating...' : detectedAddress || 'GPS locked'}
             </span>
           </div>
         </div>
 
-        {/* Location & Store Info Strip */}
-        <div className="bg-white border border-[#eaeae5] p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
-          <div>
-            <span className="text-[10px] uppercase tracking-wider text-[#73726c] block">
-              ASSIGNED STORE
-            </span>
-            <span className="font-medium text-[#171716]">
-              {assignedStore?.name || 'Office / Headquarter'}
-            </span>
-          </div>
+        {/* Camera Terminal */}
+        <div className="rounded-2xl bg-white border border-[#E8E2D5] p-4 sm:p-6 space-y-4 shadow-sm">
+          <div className="flex flex-col items-center justify-center space-y-3">
+            {/* Viewfinder Frame Responsive */}
+            <div className="relative w-full max-w-[260px] h-[260px] rounded-2xl bg-[#FAF8F5] border-2 border-dashed border-[#D6CEC0] flex items-center justify-center overflow-hidden shadow-inner">
+              <div className="absolute top-2 left-2 w-3 h-3 border-t-2 border-l-2 border-[#C26D53]" />
+              <div className="absolute top-2 right-2 w-3 h-3 border-t-2 border-r-2 border-[#C26D53]" />
+              <div className="absolute bottom-2 left-2 w-3 h-3 border-b-2 border-l-2 border-[#C26D53]" />
+              <div className="absolute bottom-2 right-2 w-3 h-3 border-b-2 border-r-2 border-[#C26D53]" />
 
-          <div className="sm:text-right max-w-sm">
-            <span className="text-[10px] uppercase tracking-wider text-[#73726c] block">
-              DETECTED LOCATION
-            </span>
-            <span className="font-mono text-[11px] text-[#171716] truncate block">
-              {detectingLocation ? 'Resolving street address...' : detectedAddress || 'GPS locked'}
-            </span>
-          </div>
-        </div>
-
-        {/* Attendance Action Box */}
-        <div className="bg-white border border-[#eaeae5] p-6 space-y-6">
-          {/* Selfie Box */}
-          <div className="flex flex-col items-center justify-center space-y-4">
-            <div className="relative w-64 h-64 bg-[#fbfbf9] border border-[#eaeae5] flex items-center justify-center overflow-hidden">
               {cameraActive ? (
                 <video ref={videoRef} playsInline autoPlay className="w-full h-full object-cover" />
               ) : capturedPhoto ? (
-                <Image src={capturedPhoto} alt="Verification Selfie" fill className="object-cover" />
+                <Image src={capturedPhoto} alt="Verification" fill className="object-cover" />
               ) : (
-                <div className="text-center p-4">
-                  <span className="text-[10px] uppercase tracking-widest text-[#73726c] font-mono block">
+                <div className="text-center p-4 space-y-1">
+                  <div className="w-10 h-10 rounded-full bg-[#FBF0EC] text-[#C26D53] mx-auto flex items-center justify-center text-sm">
+                    ✦
+                  </div>
+                  <span className="text-[9px] uppercase tracking-widest text-[#8A857C] font-mono block">
                     CAMERA VERIFICATION
                   </span>
-                  <p className="text-xs text-[#73726c] mt-1">Take a selfie to verify check-in</p>
+                  <p className="text-[11px] text-[#736E66]">
+                    Snap a selfie to record entry
+                  </p>
                 </div>
               )}
             </div>
             <canvas ref={canvasRef} className="hidden" />
 
-            {/* Camera Controls */}
-            <div className="flex items-center space-x-3">
+            {/* Controls */}
+            <div className="flex items-center space-x-2">
               {!cameraActive && !capturedPhoto && !todayRecord?.clock_out_at && (
                 <button
                   onClick={startCamera}
                   disabled={loading}
-                  className="px-4 py-2 bg-black text-white text-xs uppercase tracking-wider hover:bg-neutral-800 disabled:opacity-30 transition"
+                  className="px-5 py-2 rounded-full bg-[#1A1A18] text-white text-[11px] uppercase tracking-wider hover:bg-[#C26D53] transition shadow-xs"
                 >
                   Start Camera
                 </button>
@@ -501,7 +530,7 @@ export default function AttendancePage() {
               {cameraActive && (
                 <button
                   onClick={captureSnapshot}
-                  className="px-4 py-2 bg-black text-white text-xs uppercase tracking-wider hover:bg-neutral-800 transition"
+                  className="px-6 py-2 rounded-full bg-[#C26D53] text-white text-[11px] uppercase tracking-wider shadow-sm animate-pulse"
                 >
                   Snap Selfie
                 </button>
@@ -510,7 +539,7 @@ export default function AttendancePage() {
               {capturedPhoto && !cameraActive && !todayRecord?.clock_out_at && (
                 <button
                   onClick={retakePhoto}
-                  className="px-3.5 py-1.5 border border-[#eaeae5] text-xs uppercase tracking-wider text-[#73726c] hover:text-black transition"
+                  className="px-3.5 py-1.5 rounded-full border border-[#D6CEC0] bg-[#FAF8F5] text-[11px] text-[#635E56]"
                 >
                   Retake Photo
                 </button>
@@ -519,95 +548,145 @@ export default function AttendancePage() {
           </div>
 
           {/* Action Trigger */}
-          <div className="border-t border-[#eaeae5] pt-5 space-y-4">
+          <div className="pt-2">
             {!todayRecord?.clock_in_at ? (
               <button
                 onClick={handleClockIn}
                 disabled={submitting || !capturedPhoto}
-                className="w-full py-3.5 bg-[#171716] hover:bg-neutral-800 disabled:bg-neutral-200 disabled:text-neutral-400 text-white text-xs uppercase tracking-widest transition"
+                className="w-full py-3.5 rounded-xl bg-[#1A1A18] hover:bg-[#C26D53] disabled:bg-[#E8E2D5] disabled:text-[#A39E94] text-white text-xs uppercase tracking-[0.15em] font-medium transition shadow-xs"
               >
-                {submitting ? 'Recording Clock In...' : 'Verify & Clock In'}
+                {submitting ? 'Recording...' : 'Verify & Clock In'}
               </button>
             ) : !todayRecord?.clock_out_at ? (
               <button
                 onClick={() => {
                   if (!capturedPhoto) {
-                    alert('Please take a checkout selfie before clocking out.')
+                    alert('Please snap a checkout selfie first.')
                     return
                   }
                   setShowHandoverModal(true)
                 }}
                 disabled={submitting}
-                className="w-full py-3.5 bg-[#171716] hover:bg-neutral-800 disabled:bg-neutral-200 text-white text-xs uppercase tracking-widest transition"
+                className="w-full py-3.5 rounded-xl bg-[#2E473B] hover:bg-[#23382D] text-white text-xs uppercase tracking-[0.15em] font-medium transition shadow-xs"
               >
-                Proceed to Shift Handover & Clock Out
+                Shift Handover &amp; Clock Out
               </button>
             ) : (
-              <div className="p-4 bg-[#fbfbf9] text-center border border-[#eaeae5] text-xs">
-                <span className="font-medium text-emerald-800 uppercase tracking-wide">
-                  ✓ Shift Finished for Today
+              <div className="p-3 rounded-xl bg-[#EDF4F0] text-center border border-[#CFE2D7] text-xs">
+                <span className="font-medium text-[#2E473B] uppercase text-[10px] block">
+                  ✓ Shift Finished
                 </span>
-                <p className="text-[#73726c] text-[11px] mt-0.5">
-                  Clock in: {new Date(todayRecord.clock_in_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} — Clock out: {new Date(todayRecord.clock_out_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                <p className="text-[#5B7869] text-[10px] font-mono mt-0.5">
+                  In: {formatTime(todayRecord.clock_in_at)} • Out: {formatTime(todayRecord.clock_out_at)}
                 </p>
               </div>
             )}
 
             {statusMessage && (
-              <p className="text-[11px] text-center text-[#73726c] font-mono">{statusMessage}</p>
+              <p className="text-[10px] text-center text-[#8A857C] font-mono mt-2">{statusMessage}</p>
             )}
+          </div>
+        </div>
+
+        {/* History Table */}
+        <div id="history" className="rounded-xl bg-white border border-[#E8E2D5] overflow-hidden shadow-xs">
+          <div className="p-3 bg-[#FAF8F5] border-b border-[#E8E2D5] flex justify-between items-center">
+            <span className="text-xs uppercase tracking-wider font-semibold text-[#1A1A18]">
+              Recent Logs
+            </span>
+            <span className="text-[10px] font-mono text-[#8A857C]">
+              {historyRecords.length} Shifts
+            </span>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs text-[#1A1A18]">
+              <thead className="bg-[#FAF8F5] text-[9px] uppercase tracking-wider text-[#8A857C] border-b border-[#E8E2D5]">
+                <tr>
+                  <th className="p-2.5">Date</th>
+                  <th className="p-2.5">In</th>
+                  <th className="p-2.5">Status</th>
+                  <th className="p-2.5">Out</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[#E8E2D5]">
+                {historyRecords.length === 0 ? (
+                  <tr>
+                    <td colSpan={4} className="p-4 text-center text-xs text-[#8A857C]">
+                      No shifts recorded yet.
+                    </td>
+                  </tr>
+                ) : (
+                  historyRecords.map((r) => (
+                    <tr key={r.id}>
+                      <td className="p-2.5 font-mono text-[11px] whitespace-nowrap">{r.work_date}</td>
+                      <td className="p-2.5 font-mono text-[11px] whitespace-nowrap">{formatTime(r.clock_in_at)}</td>
+                      <td className="p-2.5 whitespace-nowrap">
+                        {r.punctuality_status === 'late' ? (
+                          <span className="text-[8px] uppercase px-1.5 py-0.5 rounded bg-[#FDE8E8] text-[#9B1C1C] font-mono font-medium">
+                            Late ({r.late_minutes || 0}m)
+                          </span>
+                        ) : (
+                          <span className="text-[8px] uppercase px-1.5 py-0.5 rounded bg-[#EDF4F0] text-[#2E473B] font-mono font-medium">
+                            On-Time
+                          </span>
+                        )}
+                      </td>
+                      <td className="p-2.5 font-mono text-[11px] whitespace-nowrap">{formatTime(r.clock_out_at)}</td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
           </div>
         </div>
 
         {/* Shift Handover Modal */}
         {showHandoverModal && (
-          <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
-            <div className="bg-white border border-[#eaeae5] max-w-lg w-full p-6 space-y-4 shadow-xl">
+          <div className="fixed inset-0 z-50 bg-[#1A1A18]/60 backdrop-blur-sm flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl border border-[#E8E2D5] max-w-sm w-full p-5 space-y-3 shadow-xl">
               <div>
-                <span className="text-[10px] uppercase tracking-widest text-[#73726c] font-mono block">
+                <span className="text-[9px] uppercase tracking-widest text-[#C26D53] font-mono block">
                   END OF SHIFT
                 </span>
-                <h2 className="text-xl font-light tracking-tight mt-0.5">
-                  Shift Handover <span className="font-serif italic font-normal">Logbook</span>
+                <h2 className="text-lg font-light tracking-tight mt-0.5">
+                  Shift Handover <span className="font-serif italic">Logbook</span>
                 </h2>
-                <p className="text-xs text-[#73726c] mt-1">
-                  Leave brief notes for the next shift associate and note the cash balance.
-                </p>
               </div>
 
-              <div className="space-y-3">
+              <div className="space-y-2.5">
                 <div>
-                  <label className="text-[10px] uppercase tracking-wider text-[#73726c] block mb-1">
-                    Store Handover Notes
+                  <label className="text-[9px] uppercase tracking-wider text-[#8A857C] font-mono block mb-1">
+                    Store Notes
                   </label>
                   <textarea
-                    rows={3}
+                    rows={2}
                     value={handoverNote}
                     onChange={(e) => setHandoverNote(e.target.value)}
-                    placeholder="Customer reservations, fitting room checks, restock needed..."
-                    className="w-full p-2.5 text-xs bg-[#fbfbf9] border border-[#eaeae5] text-[#171716] focus:outline-none resize-none"
+                    placeholder="Customer reservations, restock needed..."
+                    className="w-full p-2.5 text-xs rounded-xl bg-[#FAF8F5] border border-[#E8E2D5] text-[#1A1A18] focus:outline-none resize-none"
                   />
                 </div>
 
                 <div>
-                  <label className="text-[10px] uppercase tracking-wider text-[#73726c] block mb-1">
-                    Closing Cash Drawer / Petty Cash (Optional)
+                  <label className="text-[9px] uppercase tracking-wider text-[#8A857C] font-mono block mb-1">
+                    Closing Cash (Optional)
                   </label>
                   <input
                     type="text"
                     value={cashBalance}
                     onChange={(e) => setCashBalance(e.target.value)}
-                    placeholder="e.g. IDR 1.500.000 / Balanced"
-                    className="w-full p-2 text-xs bg-[#fbfbf9] border border-[#eaeae5] text-[#171716] focus:outline-none font-mono"
+                    placeholder="e.g. IDR 1.500.000"
+                    className="w-full p-2 text-xs rounded-xl bg-[#FAF8F5] border border-[#E8E2D5] text-[#1A1A18] font-mono focus:outline-none"
                   />
                 </div>
               </div>
 
-              <div className="flex items-center justify-end space-x-2 pt-2 border-t border-[#eaeae5]">
+              <div className="flex items-center justify-end space-x-2 pt-2 border-t border-[#E8E2D5]">
                 <button
                   type="button"
                   onClick={() => setShowHandoverModal(false)}
-                  className="px-4 py-2 border border-[#eaeae5] text-xs uppercase tracking-wider text-[#73726c] hover:text-black"
+                  className="px-3 py-1.5 text-xs text-[#736E66]"
                 >
                   Back
                 </button>
@@ -615,9 +694,9 @@ export default function AttendancePage() {
                   type="button"
                   onClick={submitClockOut}
                   disabled={submitting}
-                  className="px-5 py-2 bg-black text-white text-xs uppercase tracking-widest hover:bg-neutral-800 disabled:opacity-40"
+                  className="px-4 py-2 rounded-full bg-[#1A1A18] text-white text-xs uppercase tracking-wider disabled:opacity-40"
                 >
-                  {submitting ? 'Submitting...' : 'Complete Clock Out'}
+                  {submitting ? 'Saving...' : 'Complete Out'}
                 </button>
               </div>
             </div>
