@@ -53,6 +53,7 @@ export default function AttendancePage() {
   const [historyRecords, setHistoryRecords] = useState<AttendanceRecord[]>([])
   const [scheduledStart, setScheduledStart] = useState<string>('09:40')
   const [scheduledEnd, setScheduledEnd] = useState<string>('18:00')
+  const [shiftName, setShiftName] = useState<string>('Morning Shift')
   const [currentTimeStr, setCurrentTimeStr] = useState<string>('')
 
   const [cameraActive, setCameraActive] = useState(false)
@@ -142,7 +143,7 @@ export default function AttendancePage() {
       const today = new Date().toISOString().split('T')[0]
       const { data: schData } = await supabase
         .from('schedules')
-        .select('shift_start, shift_end, is_day_off')
+        .select('shift_start, shift_end, is_day_off, notes')
         .eq('user_id', session.user.id)
         .eq('shift_date', today)
         .maybeSingle()
@@ -150,6 +151,7 @@ export default function AttendancePage() {
       if (schData && isMounted && schData.shift_start && schData.shift_end) {
         setScheduledStart(schData.shift_start.slice(0, 5))
         setScheduledEnd(schData.shift_end.slice(0, 5))
+        setShiftName(schData.notes || 'Scheduled Shift')
       } else if (isMounted) {
         const isOffice =
           !storeName ||
@@ -157,17 +159,32 @@ export default function AttendancePage() {
           storeName.includes('hq') ||
           storeName.includes('headquarter')
 
+        const dayOfWeek = new Date().getDay() // 0: Sun, 1: Mon, ..., 6: Sat
+
         if (isOffice) {
-          setScheduledStart('09:00')
-          setScheduledEnd('17:00')
+          if (dayOfWeek === 6) {
+            // Sabtu: 08:00 - 13:00
+            setScheduledStart('08:00')
+            setScheduledEnd('13:00')
+            setShiftName('Office Saturday')
+          } else {
+            // Senin - Jumat: 09:00 - 17:00
+            setScheduledStart('09:00')
+            setScheduledEnd('17:00')
+            setShiftName('Office Weekday')
+          }
         } else {
+          // Boutiques: Batu Mejan, Nelayan, Bingin
+          // Morning Shift (09:40 - 18:00) vs Afternoon Shift (11:40 - 20:00)
           const nowHour = new Date().getHours()
           if (nowHour >= 11) {
             setScheduledStart('11:40')
             setScheduledEnd('20:00')
+            setShiftName('Afternoon Shift')
           } else {
             setScheduledStart('09:40')
             setScheduledEnd('18:00')
+            setShiftName('Morning Shift')
           }
         }
       }
@@ -234,6 +251,18 @@ export default function AttendancePage() {
       isMounted = false
     }
   }, [router])
+
+  const selectStoreShiftManually = (type: 'morning' | 'afternoon') => {
+    if (type === 'morning') {
+      setScheduledStart('09:40')
+      setScheduledEnd('18:00')
+      setShiftName('Morning Shift')
+    } else {
+      setScheduledStart('11:40')
+      setScheduledEnd('20:00')
+      setShiftName('Afternoon Shift')
+    }
+  }
 
   const startCamera = async () => {
     setCapturedPhoto(null)
@@ -434,7 +463,12 @@ export default function AttendancePage() {
     ts ? new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '--:--'
 
   const firstName = profile?.full_name?.split(' ')[0] || 'Associate'
-  const storeDisplay = assignedStore?.name || 'Office / Headquarter'
+  const storeNameLower = assignedStore?.name?.toLowerCase() || ''
+  const isOfficeStaff =
+    !storeNameLower ||
+    storeNameLower.includes('office') ||
+    storeNameLower.includes('hq') ||
+    storeNameLower.includes('headquarter')
 
   return (
     <main className="min-h-screen bg-[#F7F5F0] pb-24 text-[#1A1A18] overflow-x-hidden">
@@ -457,27 +491,60 @@ export default function AttendancePage() {
               <h1 className="text-xl sm:text-2xl font-light tracking-tight text-[#FAF7F2]">
                 WELCOME, <span className="font-serif italic text-[#E8C5A8]">{firstName}</span>
               </h1>
-              <p className="text-[11px] text-[#B3AEA6] mt-0.5">
-                Shift: <span className="text-white font-mono">{scheduledStart} — {scheduledEnd}</span>
+              <p className="text-[11px] text-[#B3AEA6] mt-0.5 font-mono">
+                {shiftName}: <span className="text-white font-medium">{scheduledStart} — {scheduledEnd}</span>
               </p>
             </div>
           </div>
         </div>
 
-        {/* Store & Location Card */}
-        <div className="rounded-xl bg-white border border-[#E8E2D5] p-3.5 space-y-2 text-xs shadow-xs">
+        {/* Store & Shift Selector */}
+        <div className="rounded-xl bg-white border border-[#E8E2D5] p-3.5 space-y-2.5 text-xs shadow-xs">
           <div className="flex items-center justify-between">
             <span className="text-[9px] uppercase tracking-wider text-[#8A857C] font-mono">
-              OUTLET
+              LOCATION
             </span>
-            <span className="font-medium text-[#1A1A18] text-xs truncate max-w-[200px]">
-              {storeDisplay}
+            <span className="font-medium text-[#1A1A18] text-xs truncate">
+              {assignedStore?.name || 'Office / Headquarter'}
             </span>
           </div>
 
+          {/* 2 Simple Shift Buttons for Store Associates */}
+          {!isOfficeStaff && !todayRecord?.clock_in_at && (
+            <div className="border-t border-[#E8E2D5]/60 pt-2 space-y-1">
+              <span className="text-[9px] uppercase tracking-wider text-[#8A857C] font-mono block">
+                CHOOSE STORE SHIFT:
+              </span>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => selectStoreShiftManually('morning')}
+                  className={`py-1.5 px-2 rounded-lg text-[11px] font-mono transition border ${
+                    scheduledStart === '09:40'
+                      ? 'bg-[#191C1A] text-white border-[#191C1A]'
+                      : 'bg-[#FAF8F5] text-[#59544C] border-[#E8E2D5] hover:border-[#191C1A]'
+                  }`}
+                >
+                  Morning (09:40 - 18:00)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => selectStoreShiftManually('afternoon')}
+                  className={`py-1.5 px-2 rounded-lg text-[11px] font-mono transition border ${
+                    scheduledStart === '11:40'
+                      ? 'bg-[#191C1A] text-white border-[#191C1A]'
+                      : 'bg-[#FAF8F5] text-[#59544C] border-[#E8E2D5] hover:border-[#191C1A]'
+                  }`}
+                >
+                  Afternoon (11:40 - 20:00)
+                </button>
+              </div>
+            </div>
+          )}
+
           <div className="border-t border-[#E8E2D5]/60 pt-2 flex items-start justify-between gap-2">
             <span className="text-[9px] uppercase tracking-wider text-[#8A857C] font-mono shrink-0">
-              LOCATION
+              GPS ADDR
             </span>
             <span className="font-mono text-[10px] text-[#59544C] text-right line-clamp-2">
               {detectingLocation ? 'Locating...' : detectedAddress || 'GPS locked'}
@@ -488,7 +555,6 @@ export default function AttendancePage() {
         {/* Camera Terminal */}
         <div className="rounded-2xl bg-white border border-[#E8E2D5] p-4 sm:p-6 space-y-4 shadow-sm">
           <div className="flex flex-col items-center justify-center space-y-3">
-            {/* Viewfinder Frame Responsive */}
             <div className="relative w-full max-w-[260px] h-[260px] rounded-2xl bg-[#FAF8F5] border-2 border-dashed border-[#D6CEC0] flex items-center justify-center overflow-hidden shadow-inner">
               <div className="absolute top-2 left-2 w-3 h-3 border-t-2 border-l-2 border-[#C26D53]" />
               <div className="absolute top-2 right-2 w-3 h-3 border-t-2 border-r-2 border-[#C26D53]" />
@@ -508,14 +574,13 @@ export default function AttendancePage() {
                     CAMERA VERIFICATION
                   </span>
                   <p className="text-[11px] text-[#736E66]">
-                    Snap a selfie to record entry
+                    Snap a selfie to record presence
                   </p>
                 </div>
               )}
             </div>
             <canvas ref={canvasRef} className="hidden" />
 
-            {/* Controls */}
             <div className="flex items-center space-x-2">
               {!cameraActive && !capturedPhoto && !todayRecord?.clock_out_at && (
                 <button
@@ -547,7 +612,6 @@ export default function AttendancePage() {
             </div>
           </div>
 
-          {/* Action Trigger */}
           <div className="pt-2">
             {!todayRecord?.clock_in_at ? (
               <button
@@ -555,7 +619,7 @@ export default function AttendancePage() {
                 disabled={submitting || !capturedPhoto}
                 className="w-full py-3.5 rounded-xl bg-[#1A1A18] hover:bg-[#C26D53] disabled:bg-[#E8E2D5] disabled:text-[#A39E94] text-white text-xs uppercase tracking-[0.15em] font-medium transition shadow-xs"
               >
-                {submitting ? 'Recording...' : 'Verify & Clock In'}
+                {submitting ? 'Recording...' : `Verify & Clock In (${scheduledStart})`}
               </button>
             ) : !todayRecord?.clock_out_at ? (
               <button

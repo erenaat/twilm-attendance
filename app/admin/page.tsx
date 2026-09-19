@@ -83,9 +83,9 @@ interface TaskItem {
   title: string
   description: string | null
   store_id: string | null
-  due_date: string | null
   priority: 'low' | 'normal' | 'high'
   status: 'pending' | 'completed'
+  created_at: string
   stores: StoreSummary | null
 }
 
@@ -130,7 +130,7 @@ export default function AdminPage() {
   const [newRosterStart, setNewRosterStart] = useState('09:00')
   const [newRosterEnd, setNewRosterEnd] = useState('17:00')
   const [newRosterIsOff, setNewRosterIsOff] = useState(false)
-  const [newRosterNotes, setNewRosterNotes] = useState('Office Shift (09:00 - 17:00)')
+  const [newRosterNotes, setNewRosterNotes] = useState('Office Mon-Fri (09:00 - 17:00)')
 
   // Task form fields
   const [newTaskTitle, setNewTaskTitle] = useState('')
@@ -242,23 +242,40 @@ export default function AdminPage() {
     }
   }, [router, fetchAllAdminData])
 
-  // Automatically adjust shift times based on staff member's store
-  const handleSelectStaffForRoster = useCallback((userId: string) => {
+  // Automatically adjust shift times based on staff member and day of the week
+  const handleSelectStaffForRoster = useCallback((userId: string, dateOverride?: string) => {
     setNewRosterUser(userId)
     const selectedStaff = allStaffList.find((s) => s.id === userId)
     const storeName = resolveStoreName(selectedStaff?.stores).toLowerCase()
-    const isOffice = !storeName || storeName.includes('office') || storeName.includes('hq') || storeName.includes('headquarter')
+    const isOffice =
+      !storeName ||
+      storeName.includes('office') ||
+      storeName.includes('hq') ||
+      storeName.includes('headquarter')
+
+    const targetDate = dateOverride || newRosterDate
+    let dayOfWeek = new Date().getDay()
+    if (targetDate) {
+      dayOfWeek = new Date(targetDate).getDay()
+    }
 
     if (isOffice) {
-      setNewRosterStart('09:00')
-      setNewRosterEnd('17:00')
-      setNewRosterNotes('Office Shift (09:00 - 17:00)')
+      if (dayOfWeek === 6) {
+        setNewRosterStart('08:00')
+        setNewRosterEnd('13:00')
+        setNewRosterNotes('Office Saturday (08:00 - 13:00)')
+      } else {
+        setNewRosterStart('09:00')
+        setNewRosterEnd('17:00')
+        setNewRosterNotes('Office Mon-Fri (09:00 - 17:00)')
+      }
     } else {
+      // Boutiques (Batu Mejan, Nelayan, Bingin) default to Morning
       setNewRosterStart('09:40')
       setNewRosterEnd('18:00')
       setNewRosterNotes('Morning Shift (09:40 - 18:00)')
     }
-  }, [allStaffList])
+  }, [allStaffList, newRosterDate])
 
   const openRosterForm = () => {
     const defaultUserId = newRosterUser || (allStaffList.length > 0 ? allStaffList[0].id : '')
@@ -269,21 +286,26 @@ export default function AdminPage() {
   }
 
   // Quick Shift Preset Switcher
-  const applyShiftPreset = (type: 'office' | 'morning' | 'closing') => {
-    if (type === 'office') {
+  const applyShiftPreset = (type: 'office_weekday' | 'office_saturday' | 'morning' | 'afternoon') => {
+    if (type === 'office_weekday') {
       setNewRosterStart('09:00')
       setNewRosterEnd('17:00')
-      setNewRosterNotes('Office Shift (09:00 - 17:00)')
+      setNewRosterNotes('Office Mon-Fri (09:00 - 17:00)')
+      setNewRosterIsOff(false)
+    } else if (type === 'office_saturday') {
+      setNewRosterStart('08:00')
+      setNewRosterEnd('13:00')
+      setNewRosterNotes('Office Saturday (08:00 - 13:00)')
       setNewRosterIsOff(false)
     } else if (type === 'morning') {
       setNewRosterStart('09:40')
       setNewRosterEnd('18:00')
       setNewRosterNotes('Morning Shift (09:40 - 18:00)')
       setNewRosterIsOff(false)
-    } else if (type === 'closing') {
+    } else if (type === 'afternoon') {
       setNewRosterStart('11:40')
       setNewRosterEnd('20:00')
-      setNewRosterNotes('Middle/Closing Shift (11:40 - 20:00)')
+      setNewRosterNotes('Afternoon Shift (11:40 - 20:00)')
       setNewRosterIsOff(false)
     }
   }
@@ -479,7 +501,6 @@ export default function AdminPage() {
     }
   }
 
-  // Stable filter check
   const checkMatchesStore = useCallback(
     (storeId: string | null | undefined, staffStoreId?: string | null) => {
       if (selectedStoreFilter === 'all') return true
@@ -513,7 +534,6 @@ export default function AdminPage() {
     return allStaffList.filter((s) => s.store_id === selectedStoreFilter)
   }, [allStaffList, selectedStoreFilter])
 
-  // Helper untuk membersihkan karakter XML
   const escapeXml = (str: string | number | null | undefined) => {
     if (str === null || str === undefined) return ''
     return String(str)
@@ -543,7 +563,7 @@ export default function AdminPage() {
       { header: 'Employee ID', width: 95 },
       { header: 'Staff Name', width: 140 },
       { header: 'Email', width: 160 },
-      { header: 'Boutique Store', width: 120 },
+      { header: 'Store Branch', width: 120 },
       { header: 'Clock In', width: 75 },
       { header: 'Punctuality', width: 100 },
       { header: 'Late (Mins)', width: 80 },
@@ -634,7 +654,7 @@ export default function AdminPage() {
     <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#333333"/>
    </Borders>
    <Font ss:FontName="Segoe UI" ss:Size="9.5" ss:Bold="1" ss:Color="#FFFFFF"/>
-   <Interior ss:Color="#171716" ss:Pattern="Solid"/>
+   <Interior ss:Color="#191C1A" ss:Pattern="Solid"/>
   </Style>
   <Style ss:ID="DataRowEven">
    <Alignment ss:Vertical="Center"/>
@@ -723,31 +743,33 @@ export default function AdminPage() {
     ts ? new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '--:--'
 
   return (
-    <main className="min-h-screen bg-[#fbfbf9] pb-32 md:pb-16 text-[#171716]">
+    <main className="min-h-screen bg-[#FAF8F5] pb-32 md:pb-16 text-[#191C1A]">
       <StaffNav userRole="admin" />
 
       <div className="max-w-6xl mx-auto px-4 pt-8 space-y-6">
         {/* Header Management Strip */}
-        <div className="border-b border-[#eaeae5] pb-4 flex flex-col sm:flex-row sm:items-end justify-between gap-4">
+        <div className="border-b border-[#E8E2D5] pb-5 flex flex-col sm:flex-row sm:items-end justify-between gap-4">
           <div>
-            <span className="text-[10px] tracking-[0.25em] uppercase text-[#73726c] font-mono">
+            <span className="text-[10px] tracking-[0.25em] uppercase text-[#8A857C] font-mono">
               STORE MANAGEMENT OS
             </span>
-            <h1 className="text-2xl sm:text-3xl font-light tracking-tight mt-1">
-              STORE <span className="font-serif italic font-normal">ADMINISTRATION</span>
+            <h1 className="text-2xl sm:text-3xl font-light tracking-tight mt-1 text-[#191C1A]">
+              STORE <span className="font-serif italic font-normal text-[#C26D53]">ADMINISTRATION</span>
             </h1>
           </div>
 
           <div className="flex flex-wrap items-center gap-2 sm:gap-3">
             {/* Store Switcher */}
-            <div className="flex items-center space-x-2 bg-white border border-[#eaeae5] px-3 py-1.5">
-              <span className="text-[10px] uppercase tracking-wider text-[#73726c]">Store:</span>
+            <div className="flex items-center space-x-2 bg-white border border-[#E8E2D5] px-3 py-1.5 rounded-full shadow-xs">
+              <span className="text-[10px] uppercase tracking-wider text-[#8A857C] font-mono">
+                Store:
+              </span>
               <select
                 value={selectedStoreFilter}
                 onChange={(e) => setSelectedStoreFilter(e.target.value)}
-                className="text-xs bg-transparent text-[#171716] font-medium focus:outline-none cursor-pointer"
+                className="text-xs bg-transparent text-[#191C1A] font-medium focus:outline-none cursor-pointer font-sans"
               >
-                <option value="all">All Boutiques & Office</option>
+                <option value="all">All Boutiques &amp; Office</option>
                 {stores.map((s) => (
                   <option key={s.id} value={s.id}>
                     {s.name}
@@ -758,13 +780,13 @@ export default function AdminPage() {
 
             <button
               onClick={exportToExcelSheet}
-              className="px-3.5 py-1.5 bg-white border border-[#eaeae5] text-[11px] uppercase tracking-wider hover:bg-neutral-50 transition"
+              className="px-3.5 py-1.5 bg-white border border-[#E8E2D5] text-[11px] uppercase tracking-wider hover:bg-neutral-50 rounded-full transition shadow-xs"
             >
               Export Excel Sheet
             </button>
             <button
               onClick={fetchAllAdminData}
-              className="px-3.5 py-1.5 bg-[#171716] text-white text-[11px] uppercase tracking-wider hover:bg-neutral-800 transition"
+              className="px-4 py-1.5 bg-[#191C1A] text-white text-[11px] uppercase tracking-wider hover:bg-[#C26D53] rounded-full transition shadow-xs"
             >
               Refresh
             </button>
@@ -772,13 +794,13 @@ export default function AdminPage() {
         </div>
 
         {/* Navigation Tabs */}
-        <div className="flex border-b border-[#eaeae5] space-x-6 text-xs uppercase tracking-wider overflow-x-auto pb-1">
+        <div className="flex border-b border-[#E8E2D5] space-x-6 text-xs uppercase tracking-wider overflow-x-auto pb-1">
           <button
             onClick={() => setActiveTab('attendance')}
             className={`pb-2 transition-colors whitespace-nowrap ${
               activeTab === 'attendance'
-                ? 'border-b-2 border-black font-semibold text-black'
-                : 'text-[#73726c]'
+                ? 'border-b-2 border-[#191C1A] font-semibold text-[#191C1A]'
+                : 'text-[#8A857C]'
             }`}
           >
             Attendance ({filteredAttendance.length})
@@ -787,8 +809,8 @@ export default function AdminPage() {
             onClick={() => setActiveTab('team')}
             className={`pb-2 transition-colors whitespace-nowrap ${
               activeTab === 'team'
-                ? 'border-b-2 border-black font-semibold text-black'
-                : 'text-[#73726c]'
+                ? 'border-b-2 border-[#191C1A] font-semibold text-[#191C1A]'
+                : 'text-[#8A857C]'
             }`}
           >
             Team Directory ({filteredStaffList.length})
@@ -797,8 +819,8 @@ export default function AdminPage() {
             onClick={() => setActiveTab('leave')}
             className={`pb-2 transition-colors whitespace-nowrap ${
               activeTab === 'leave'
-                ? 'border-b-2 border-black font-semibold text-black'
-                : 'text-[#73726c]'
+                ? 'border-b-2 border-[#191C1A] font-semibold text-[#191C1A]'
+                : 'text-[#8A857C]'
             }`}
           >
             Leave Approvals ({filteredLeave.filter((l) => l.status === 'pending').length})
@@ -807,8 +829,8 @@ export default function AdminPage() {
             onClick={() => setActiveTab('schedule')}
             className={`pb-2 transition-colors whitespace-nowrap ${
               activeTab === 'schedule'
-                ? 'border-b-2 border-black font-semibold text-black'
-                : 'text-[#73726c]'
+                ? 'border-b-2 border-[#191C1A] font-semibold text-[#191C1A]'
+                : 'text-[#8A857C]'
             }`}
           >
             Roster Shifts ({filteredSchedules.length})
@@ -817,8 +839,8 @@ export default function AdminPage() {
             onClick={() => setActiveTab('tasks')}
             className={`pb-2 transition-colors whitespace-nowrap ${
               activeTab === 'tasks'
-                ? 'border-b-2 border-black font-semibold text-black'
-                : 'text-[#73726c]'
+                ? 'border-b-2 border-[#191C1A] font-semibold text-[#191C1A]'
+                : 'text-[#8A857C]'
             }`}
           >
             Store Tasks ({filteredTasks.length})
@@ -827,8 +849,8 @@ export default function AdminPage() {
             onClick={() => setActiveTab('news')}
             className={`pb-2 transition-colors whitespace-nowrap ${
               activeTab === 'news'
-                ? 'border-b-2 border-black font-semibold text-black'
-                : 'text-[#73726c]'
+                ? 'border-b-2 border-[#191C1A] font-semibold text-[#191C1A]'
+                : 'text-[#8A857C]'
             }`}
           >
             Broadcast News ({filteredNews.length})
@@ -837,10 +859,10 @@ export default function AdminPage() {
 
         {/* TAB 1: ATTENDANCE */}
         {activeTab === 'attendance' && (
-          <div className="bg-white border border-[#eaeae5] overflow-hidden">
+          <div className="bg-white border border-[#E8E2D5] rounded-2xl overflow-hidden shadow-xs">
             <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs text-[#171716]">
-                <thead className="bg-[#fbfbf9] text-[10px] uppercase tracking-wider text-[#73726c] border-b border-[#eaeae5]">
+              <table className="w-full text-left text-xs text-[#191C1A]">
+                <thead className="bg-[#FAF8F5] text-[10px] uppercase tracking-wider text-[#8A857C] border-b border-[#E8E2D5]">
                   <tr>
                     <th className="p-3.5">Staff</th>
                     <th className="p-3.5">Store</th>
@@ -852,44 +874,44 @@ export default function AdminPage() {
                     <th className="p-3.5">Status</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-[#eaeae5]">
+                <tbody className="divide-y divide-[#E8E2D5]">
                   {loading ? (
                     <tr>
-                      <td colSpan={8} className="p-8 text-center text-xs text-[#73726c]">
-                        Loading...
+                      <td colSpan={8} className="p-8 text-center text-xs text-[#8A857C]">
+                        Loading logs...
                       </td>
                     </tr>
                   ) : filteredAttendance.length === 0 ? (
                     <tr>
-                      <td colSpan={8} className="p-8 text-center text-xs text-[#73726c]">
+                      <td colSpan={8} className="p-8 text-center text-xs text-[#8A857C]">
                         No logs for this store.
                       </td>
                     </tr>
                   ) : (
                     filteredAttendance.map((rec) => (
-                      <tr key={rec.id} className="hover:bg-[#fbfbf9]/60">
+                      <tr key={rec.id} className="hover:bg-[#FAF8F5]/60 transition-colors">
                         <td className="p-3.5 font-medium whitespace-nowrap">
                           {rec.profiles?.full_name || 'Staff'}
-                          <div className="text-[10px] text-[#73726c] font-normal">
+                          <div className="text-[10px] text-[#8A857C] font-normal">
                             {rec.profiles?.email}
                           </div>
                         </td>
                         <td className="p-3.5 whitespace-nowrap">
-                          <span className="text-[10px] tracking-wider uppercase px-2 py-0.5 bg-neutral-100 border border-[#eaeae5]">
-                            {rec.stores?.name || 'Unassigned'}
+                          <span className="text-[10px] tracking-wider uppercase px-2 py-0.5 bg-neutral-100 border border-[#E8E2D5] rounded-md font-mono">
+                            {rec.stores?.name || 'Office'}
                           </span>
                         </td>
                         <td className="p-3.5 whitespace-nowrap font-mono">{rec.work_date}</td>
 
-                        {/* Clock In + Punctuality Badge */}
+                        {/* Clock In */}
                         <td className="p-3.5 whitespace-nowrap font-mono">
                           <div>{formatTime(rec.clock_in_at)}</div>
                           {rec.punctuality_status === 'late' ? (
-                            <span className="inline-block text-[9px] uppercase tracking-wider px-1.5 py-0.2 bg-rose-50 text-rose-800 border border-rose-200 mt-0.5">
+                            <span className="inline-block text-[9px] uppercase px-1.5 py-0.2 bg-[#FDE8E8] text-[#9B1C1C] border border-[#F8B4B4] rounded-md mt-0.5">
                               Late ({rec.late_minutes}m)
                             </span>
                           ) : rec.clock_in_at ? (
-                            <span className="inline-block text-[9px] uppercase tracking-wider px-1.5 py-0.2 bg-emerald-50 text-emerald-800 border border-emerald-200 mt-0.5">
+                            <span className="inline-block text-[9px] uppercase px-1.5 py-0.2 bg-[#EDF4F0] text-[#2E473B] border border-[#CFE2D7] rounded-md mt-0.5">
                               On-Time
                             </span>
                           ) : null}
@@ -899,7 +921,7 @@ export default function AdminPage() {
                         <td className="p-3.5">
                           {rec.clock_in_photo_url ? (
                             <a href={rec.clock_in_photo_url} target="_blank" rel="noreferrer">
-                              <div className="relative w-9 h-11 border border-[#eaeae5] overflow-hidden">
+                              <div className="relative w-9 h-11 border border-[#E8E2D5] rounded overflow-hidden">
                                 <Image
                                   src={rec.clock_in_photo_url}
                                   alt="Selfie"
@@ -914,23 +936,23 @@ export default function AdminPage() {
                           )}
                         </td>
 
-                        {/* Clock Out + Overtime Badge */}
+                        {/* Clock Out */}
                         <td className="p-3.5 whitespace-nowrap font-mono">
                           <div>{formatTime(rec.clock_out_at)}</div>
                           {rec.overtime_minutes && rec.overtime_minutes > 0 ? (
-                            <span className="inline-block text-[9px] uppercase tracking-wider px-1.5 py-0.2 bg-amber-50 text-amber-800 border border-amber-200 mt-0.5">
+                            <span className="inline-block text-[9px] uppercase px-1.5 py-0.2 bg-[#FAF0E6] text-[#9E7B56] border border-[#EEDCC7] rounded-md mt-0.5">
                               OT (+{Math.floor(rec.overtime_minutes / 60)}h {rec.overtime_minutes % 60}m)
                             </span>
                           ) : null}
                         </td>
 
                         {/* Handover Notes & Cash */}
-                        <td className="p-3.5 max-w-xs text-[11px] text-[#73726c]">
+                        <td className="p-3.5 max-w-xs text-[11px] text-[#736E66]">
                           {rec.handover_notes ? (
                             <div>
-                              <span className="text-[#171716] block">{rec.handover_notes}</span>
+                              <span className="text-[#191C1A] block">{rec.handover_notes}</span>
                               {rec.cash_drawer_balance && (
-                                <span className="font-mono text-[10px] text-[#8c8b85] block mt-0.5">
+                                <span className="font-mono text-[10px] text-[#8A857C] block mt-0.5">
                                   Cash: {rec.cash_drawer_balance}
                                 </span>
                               )}
@@ -942,10 +964,10 @@ export default function AdminPage() {
 
                         <td className="p-3.5 whitespace-nowrap">
                           <span
-                            className={`px-2 py-0.5 text-[10px] uppercase font-medium ${
+                            className={`px-2 py-0.5 text-[10px] uppercase font-medium rounded-full ${
                               rec.clock_out_at
-                                ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
-                                : 'bg-amber-50 text-amber-800 border border-amber-200'
+                                ? 'bg-[#EDF4F0] text-[#2E473B] border border-[#CFE2D7]'
+                                : 'bg-[#FAF0E6] text-[#9E7B56] border border-[#EEDCC7]'
                             }`}
                           >
                             {rec.clock_out_at ? 'Present' : 'Working'}
@@ -962,24 +984,24 @@ export default function AdminPage() {
 
         {/* TAB 2: TEAM / STAFF DIRECTORY */}
         {activeTab === 'team' && (
-          <div className="bg-white border border-[#eaeae5] overflow-hidden">
-            <div className="p-4 border-b border-[#eaeae5] bg-[#fbfbf9]/60 flex justify-between items-center">
+          <div className="bg-white border border-[#E8E2D5] rounded-2xl overflow-hidden shadow-xs">
+            <div className="p-4 border-b border-[#E8E2D5] bg-[#FAF8F5]/60 flex justify-between items-center">
               <div>
-                <span className="text-xs uppercase tracking-wider font-medium text-[#171716]">
-                  Team Directory & Profile Scoping
+                <span className="text-xs uppercase tracking-wider font-semibold text-[#191C1A]">
+                  Team Directory &amp; Profile Scoping
                 </span>
-                <p className="text-[11px] text-[#73726c]">
+                <p className="text-[11px] text-[#8A857C]">
                   Manage staff roles, employee IDs, and assigned store branches directly.
                 </p>
               </div>
-              <span className="text-[11px] font-mono text-[#73726c]">
+              <span className="text-[11px] font-mono text-[#8A857C]">
                 {filteredStaffList.length} Team Members
               </span>
             </div>
 
             <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs text-[#171716]">
-                <thead className="bg-[#fbfbf9] text-[10px] uppercase tracking-wider text-[#73726c] border-b border-[#eaeae5]">
+              <table className="w-full text-left text-xs text-[#191C1A]">
+                <thead className="bg-[#FAF8F5] text-[10px] uppercase tracking-wider text-[#8A857C] border-b border-[#E8E2D5]">
                   <tr>
                     <th className="p-3.5">Staff Member</th>
                     <th className="p-3.5">Employee Code</th>
@@ -988,10 +1010,10 @@ export default function AdminPage() {
                     <th className="p-3.5 text-right">Action</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-[#eaeae5]">
+                <tbody className="divide-y divide-[#E8E2D5]">
                   {filteredStaffList.length === 0 ? (
                     <tr>
-                      <td colSpan={5} className="p-8 text-center text-xs text-[#73726c]">
+                      <td colSpan={5} className="p-8 text-center text-xs text-[#8A857C]">
                         No team members registered for this store.
                       </td>
                     </tr>
@@ -1000,10 +1022,10 @@ export default function AdminPage() {
                       const isEditing = editingStaffId === member.id
 
                       return (
-                        <tr key={member.id} className="hover:bg-[#fbfbf9]/40 transition-colors">
+                        <tr key={member.id} className="hover:bg-[#FAF8F5]/40 transition-colors">
                           <td className="p-3.5 font-medium whitespace-nowrap">
                             {member.full_name || 'Staff Member'}
-                            <div className="text-[10px] text-[#73726c] font-normal">
+                            <div className="text-[10px] text-[#8A857C] font-normal">
                               {member.email}
                             </div>
                           </td>
@@ -1016,12 +1038,12 @@ export default function AdminPage() {
                                 value={editEmployeeCode}
                                 onChange={(e) => setEditEmployeeCode(e.target.value)}
                                 placeholder="e.g. TW-BM-01"
-                                className="p-1.5 text-xs border border-[#eaeae5] bg-white font-mono w-32 uppercase"
+                                className="p-1.5 text-xs border border-[#E8E2D5] bg-white font-mono w-32 uppercase rounded"
                               />
                             ) : (
-                              <span className="font-mono text-xs text-[#171716]">
+                              <span className="font-mono text-xs text-[#191C1A]">
                                 {member.employee_code || (
-                                  <span className="text-[#8c8b85] italic">Not set</span>
+                                  <span className="text-[#8A857C] italic">Not set</span>
                                 )}
                               </span>
                             )}
@@ -1033,7 +1055,7 @@ export default function AdminPage() {
                               <select
                                 value={editStoreId}
                                 onChange={(e) => setEditStoreId(e.target.value)}
-                                className="p-1.5 text-xs border border-[#eaeae5] bg-white text-[#171716]"
+                                className="p-1.5 text-xs border border-[#E8E2D5] bg-white text-[#191C1A] rounded"
                               >
                                 <option value="">Global / Office</option>
                                 {stores.map((s) => (
@@ -1043,8 +1065,8 @@ export default function AdminPage() {
                                 ))}
                               </select>
                             ) : (
-                              <span className="text-[10px] tracking-wider uppercase px-2 py-0.5 bg-neutral-100 border border-[#eaeae5] font-mono">
-                                {resolveStoreName(member.stores) || 'Office / Unassigned'}
+                              <span className="text-[10px] tracking-wider uppercase px-2 py-0.5 bg-neutral-100 border border-[#E8E2D5] font-mono rounded">
+                                {resolveStoreName(member.stores) || 'Office / Headquarter'}
                               </span>
                             )}
                           </td>
@@ -1057,17 +1079,17 @@ export default function AdminPage() {
                                 onChange={(e) =>
                                   setEditRole(e.target.value as 'staff' | 'admin')
                                 }
-                                className="p-1.5 text-xs border border-[#eaeae5] bg-white font-mono uppercase"
+                                className="p-1.5 text-xs border border-[#E8E2D5] bg-white font-mono uppercase rounded"
                               >
                                 <option value="staff">STAFF</option>
                                 <option value="admin">ADMIN</option>
                               </select>
                             ) : (
                               <span
-                                className={`text-[10px] tracking-wider uppercase px-2 py-0.5 font-mono font-medium ${
+                                className={`text-[10px] tracking-wider uppercase px-2 py-0.5 font-mono font-medium rounded-full ${
                                   member.role === 'admin'
-                                    ? 'bg-amber-100 text-amber-900 border border-amber-300'
-                                    : 'bg-neutral-50 text-[#73726c] border border-[#eaeae5]'
+                                    ? 'bg-[#FBF0EC] text-[#C26D53] border border-[#F2D7CE]'
+                                    : 'bg-[#F2EFE8] text-[#635E56]'
                                 }`}
                               >
                                 {member.role}
@@ -1082,13 +1104,13 @@ export default function AdminPage() {
                                 <button
                                   onClick={() => handleSaveStaff(member.id)}
                                   disabled={savingStaff}
-                                  className="px-2.5 py-1 bg-black text-white text-[11px] uppercase tracking-wider hover:bg-neutral-800 disabled:bg-neutral-300"
+                                  className="px-3 py-1 bg-[#191C1A] text-white text-[11px] uppercase tracking-wider hover:bg-[#C26D53] rounded-full disabled:bg-neutral-300"
                                 >
                                   {savingStaff ? 'Saving...' : 'Save'}
                                 </button>
                                 <button
                                   onClick={cancelEditStaff}
-                                  className="px-2.5 py-1 bg-white border border-[#eaeae5] text-[11px] uppercase tracking-wider text-[#73726c] hover:text-black"
+                                  className="px-3 py-1 bg-white border border-[#E8E2D5] text-[11px] uppercase tracking-wider text-[#8A857C] hover:text-[#191C1A] rounded-full"
                                 >
                                   Cancel
                                 </button>
@@ -1096,7 +1118,7 @@ export default function AdminPage() {
                             ) : (
                               <button
                                 onClick={() => startEditStaff(member)}
-                                className="px-2.5 py-1 border border-[#eaeae5] bg-white text-[11px] uppercase tracking-wider text-[#171716] hover:bg-neutral-50"
+                                className="px-3 py-1 border border-[#E8E2D5] bg-white text-[11px] uppercase tracking-wider text-[#191C1A] hover:bg-[#FAF8F5] rounded-full"
                               >
                                 Edit
                               </button>
@@ -1114,9 +1136,9 @@ export default function AdminPage() {
 
         {/* TAB 3: LEAVE APPROVALS */}
         {activeTab === 'leave' && (
-          <div className="bg-white border border-[#eaeae5] divide-y divide-[#eaeae5]">
+          <div className="bg-white border border-[#E8E2D5] rounded-2xl divide-y divide-[#E8E2D5] overflow-hidden shadow-xs">
             {filteredLeave.length === 0 ? (
-              <p className="p-8 text-center text-xs text-[#73726c]">
+              <p className="p-8 text-center text-xs text-[#8A857C]">
                 No leave requests for this store.
               </p>
             ) : (
@@ -1127,26 +1149,26 @@ export default function AdminPage() {
                 >
                   <div>
                     <div className="flex items-center space-x-2">
-                      <span className="text-sm font-medium">
+                      <span className="text-sm font-medium text-[#191C1A]">
                         {req.profiles?.full_name || 'Staff'}
                       </span>
-                      <span className="text-[10px] uppercase tracking-wider px-2 py-0.5 bg-neutral-100 border border-[#eaeae5]">
+                      <span className="text-[10px] uppercase tracking-wider px-2 py-0.5 bg-neutral-100 border border-[#E8E2D5] rounded">
                         {req.leave_type} Leave
                       </span>
                       <span
-                        className={`text-[9px] uppercase px-2 py-0.5 font-mono ${
+                        className={`text-[9px] uppercase px-2 py-0.5 rounded font-mono ${
                           req.status === 'approved'
-                            ? 'bg-emerald-50 text-emerald-800'
+                            ? 'bg-[#EDF4F0] text-[#2E473B]'
                             : req.status === 'rejected'
-                            ? 'bg-rose-50 text-rose-800'
-                            : 'bg-amber-50 text-amber-800'
+                            ? 'bg-[#FDE8E8] text-[#9B1C1C]'
+                            : 'bg-[#FAF0E6] text-[#9E7B56]'
                         }`}
                       >
                         {req.status}
                       </span>
                     </div>
-                    <p className="text-xs text-[#73726c] mt-1">{req.reason}</p>
-                    <span className="text-[11px] font-mono text-[#73726c]">
+                    <p className="text-xs text-[#736E66] mt-1">{req.reason}</p>
+                    <span className="text-[11px] font-mono text-[#8A857C]">
                       Dates: {req.start_date} to {req.end_date}
                     </span>
                   </div>
@@ -1155,13 +1177,13 @@ export default function AdminPage() {
                     <div className="flex items-center space-x-2">
                       <button
                         onClick={() => handleLeaveDecision(req.id, 'approved')}
-                        className="px-3 py-1.5 bg-emerald-800 text-white text-[11px] uppercase tracking-wider hover:bg-emerald-900 transition"
+                        className="px-3.5 py-1.5 bg-[#2E473B] text-white text-[11px] uppercase tracking-wider hover:bg-[#23382D] rounded-full transition"
                       >
                         Approve
                       </button>
                       <button
                         onClick={() => handleLeaveDecision(req.id, 'rejected')}
-                        className="px-3 py-1.5 bg-white border border-[#eaeae5] text-rose-700 text-[11px] uppercase tracking-wider hover:bg-rose-50 transition"
+                        className="px-3.5 py-1.5 bg-white border border-[#E8E2D5] text-rose-700 text-[11px] uppercase tracking-wider hover:bg-rose-50 rounded-full transition"
                       >
                         Reject
                       </button>
@@ -1176,18 +1198,18 @@ export default function AdminPage() {
         {/* TAB 4: ROSTER / SHIFT PLANNER */}
         {activeTab === 'schedule' && (
           <div className="space-y-4">
-            <div className="flex justify-between items-center bg-white border border-[#eaeae5] p-4">
+            <div className="flex justify-between items-center bg-white border border-[#E8E2D5] p-4 rounded-2xl shadow-xs">
               <div>
-                <span className="text-xs uppercase tracking-wider font-semibold">
+                <span className="text-xs uppercase tracking-wider font-semibold text-[#191C1A]">
                   Store Roster Schedule
                 </span>
-                <p className="text-[11px] text-[#73726c]">
-                  Office: 09:00 — 17:00 | Stores: Morning (09:40 — 18:00) / Middle (11:40 — 20:00)
+                <p className="text-[11px] text-[#8A857C]">
+                  Office: Mon-Fri (09:00-17:00), Sat (08:00-13:00) | Stores: Morning (09:40-18:00), Afternoon (11:40-20:00)
                 </p>
               </div>
               <button
                 onClick={openRosterForm}
-                className="px-3.5 py-1.5 bg-[#171716] text-white text-xs uppercase tracking-wider hover:bg-neutral-800 transition"
+                className="px-4 py-2 bg-[#191C1A] text-white text-xs uppercase tracking-wider hover:bg-[#C26D53] rounded-full transition"
               >
                 {showRosterForm ? 'Close' : '+ Add Shift'}
               </button>
@@ -1196,45 +1218,52 @@ export default function AdminPage() {
             {showRosterForm && (
               <form
                 onSubmit={handleCreateRoster}
-                className="bg-white border border-[#eaeae5] p-5 space-y-4"
+                className="bg-white border border-[#E8E2D5] p-5 rounded-2xl space-y-4 shadow-sm"
               >
-                {/* 1-Click Shift Presets */}
-                <div className="flex flex-wrap items-center gap-2 pb-2 border-b border-[#eaeae5]">
-                  <span className="text-[10px] uppercase tracking-wider text-[#73726c] mr-1">
-                    Quick Preset:
+                {/* 1-Click Shift Presets with Updated Store Logic */}
+                <div className="flex flex-wrap items-center gap-2 pb-2 border-b border-[#E8E2D5]">
+                  <span className="text-[10px] uppercase tracking-wider text-[#8A857C] font-mono mr-1">
+                    Presets:
                   </span>
                   <button
                     type="button"
-                    onClick={() => applyShiftPreset('office')}
-                    className="px-2.5 py-1 text-[11px] border border-[#eaeae5] bg-neutral-50 hover:bg-black hover:text-white transition"
+                    onClick={() => applyShiftPreset('office_weekday')}
+                    className="px-2.5 py-1 text-[10px] border border-[#E8E2D5] bg-[#FAF8F5] hover:bg-[#191C1A] hover:text-white rounded-md transition font-mono"
                   >
-                    Office (09:00 — 17:00)
+                    Office Mon-Fri (09:00 - 17:00)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => applyShiftPreset('office_saturday')}
+                    className="px-2.5 py-1 text-[10px] border border-[#E8E2D5] bg-[#FAF8F5] hover:bg-[#191C1A] hover:text-white rounded-md transition font-mono"
+                  >
+                    Office Sat (08:00 - 13:00)
                   </button>
                   <button
                     type="button"
                     onClick={() => applyShiftPreset('morning')}
-                    className="px-2.5 py-1 text-[11px] border border-[#eaeae5] bg-neutral-50 hover:bg-black hover:text-white transition"
+                    className="px-2.5 py-1 text-[10px] border border-[#E8E2D5] bg-[#FAF8F5] hover:bg-[#191C1A] hover:text-white rounded-md transition font-mono"
                   >
-                    Boutique Morning (09:40 — 18:00)
+                    Store Morning (09:40 - 18:00)
                   </button>
                   <button
                     type="button"
-                    onClick={() => applyShiftPreset('closing')}
-                    className="px-2.5 py-1 text-[11px] border border-[#eaeae5] bg-neutral-50 hover:bg-black hover:text-white transition"
+                    onClick={() => applyShiftPreset('afternoon')}
+                    className="px-2.5 py-1 text-[10px] border border-[#E8E2D5] bg-[#FAF8F5] hover:bg-[#191C1A] hover:text-white rounded-md transition font-mono"
                   >
-                    Boutique Middle/Closing (11:40 — 20:00)
+                    Store Afternoon (11:40 - 20:00)
                   </button>
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
                   <div>
-                    <label className="text-[10px] uppercase text-[#73726c] block mb-1">
+                    <label className="text-[10px] uppercase text-[#8A857C] font-mono block mb-1">
                       Select Staff
                     </label>
                     <select
                       value={newRosterUser}
                       onChange={(e) => handleSelectStaffForRoster(e.target.value)}
-                      className="w-full p-2 text-xs border border-[#eaeae5] bg-[#fbfbf9]"
+                      className="w-full p-2 text-xs border border-[#E8E2D5] bg-[#FAF8F5] rounded"
                     >
                       {allStaffList.map((s) => (
                         <option key={s.id} value={s.id}>
@@ -1245,20 +1274,23 @@ export default function AdminPage() {
                   </div>
 
                   <div>
-                    <label className="text-[10px] uppercase text-[#73726c] block mb-1">
+                    <label className="text-[10px] uppercase text-[#8A857C] font-mono block mb-1">
                       Shift Date
                     </label>
                     <input
                       type="date"
                       value={newRosterDate}
-                      onChange={(e) => setNewRosterDate(e.target.value)}
+                      onChange={(e) => {
+                        setNewRosterDate(e.target.value)
+                        handleSelectStaffForRoster(newRosterUser, e.target.value)
+                      }}
                       required
-                      className="w-full p-2 text-xs border border-[#eaeae5] bg-[#fbfbf9] font-mono"
+                      className="w-full p-2 text-xs border border-[#E8E2D5] bg-[#FAF8F5] font-mono rounded"
                     />
                   </div>
 
                   <div>
-                    <label className="text-[10px] uppercase text-[#73726c] block mb-1">
+                    <label className="text-[10px] uppercase text-[#8A857C] font-mono block mb-1">
                       Start Time
                     </label>
                     <input
@@ -1266,12 +1298,12 @@ export default function AdminPage() {
                       value={newRosterStart}
                       disabled={newRosterIsOff}
                       onChange={(e) => setNewRosterStart(e.target.value)}
-                      className="w-full p-2 text-xs border border-[#eaeae5] bg-[#fbfbf9] font-mono"
+                      className="w-full p-2 text-xs border border-[#E8E2D5] bg-[#FAF8F5] font-mono rounded"
                     />
                   </div>
 
                   <div>
-                    <label className="text-[10px] uppercase text-[#73726c] block mb-1">
+                    <label className="text-[10px] uppercase text-[#8A857C] font-mono block mb-1">
                       End Time
                     </label>
                     <input
@@ -1279,7 +1311,7 @@ export default function AdminPage() {
                       value={newRosterEnd}
                       disabled={newRosterIsOff}
                       onChange={(e) => setNewRosterEnd(e.target.value)}
-                      className="w-full p-2 text-xs border border-[#eaeae5] bg-[#fbfbf9] font-mono"
+                      className="w-full p-2 text-xs border border-[#E8E2D5] bg-[#FAF8F5] font-mono rounded"
                     />
                   </div>
                 </div>
@@ -1291,7 +1323,7 @@ export default function AdminPage() {
                         type="checkbox"
                         checked={newRosterIsOff}
                         onChange={(e) => setNewRosterIsOff(e.target.checked)}
-                        className="accent-black"
+                        className="accent-[#C26D53]"
                       />
                       <span>Mark as Day Off / Rest</span>
                     </label>
@@ -1300,14 +1332,14 @@ export default function AdminPage() {
                       type="text"
                       value={newRosterNotes}
                       onChange={(e) => setNewRosterNotes(e.target.value)}
-                      placeholder="Notes (e.g. Office Shift)"
-                      className="flex-1 p-2 text-xs border border-[#eaeae5] bg-[#fbfbf9]"
+                      placeholder="Notes (e.g. Morning Shift)"
+                      className="flex-1 p-2 text-xs border border-[#E8E2D5] bg-[#FAF8F5] rounded"
                     />
                   </div>
 
                   <button
                     type="submit"
-                    className="px-5 py-2 bg-black text-white text-xs uppercase tracking-widest whitespace-nowrap hover:bg-neutral-800 transition"
+                    className="px-5 py-2 bg-[#191C1A] text-white text-xs uppercase tracking-widest whitespace-nowrap hover:bg-[#C26D53] rounded-full transition"
                   >
                     Save Shift
                   </button>
@@ -1315,37 +1347,37 @@ export default function AdminPage() {
               </form>
             )}
 
-            <div className="bg-white border border-[#eaeae5] divide-y divide-[#eaeae5]">
+            <div className="bg-white border border-[#E8E2D5] rounded-2xl divide-y divide-[#E8E2D5] overflow-hidden shadow-xs">
               {filteredSchedules.length === 0 ? (
-                <p className="p-8 text-center text-xs text-[#73726c]">No shifts scheduled.</p>
+                <p className="p-8 text-center text-xs text-[#8A857C]">No shifts scheduled.</p>
               ) : (
                 filteredSchedules.map((item) => (
                   <div
                     key={item.id}
-                    className="p-4 flex items-center justify-between hover:bg-[#fbfbf9]"
+                    className="p-4 flex items-center justify-between hover:bg-[#FAF8F5]"
                   >
                     <div className="flex items-center space-x-4">
-                      <span className="font-mono text-xs w-24">{item.shift_date}</span>
+                      <span className="font-mono text-xs w-24 text-[#8A857C]">{item.shift_date}</span>
                       <div>
-                        <span className="text-xs font-semibold">
+                        <span className="text-xs font-semibold text-[#191C1A]">
                           {item.profiles?.full_name || 'Staff'}
                         </span>
-                        <span className="text-[10px] text-[#73726c] ml-2 font-mono">
+                        <span className="text-[10px] text-[#8A857C] ml-2 font-mono">
                           ({item.stores?.name || 'Store'})
                         </span>
-                        <p className="text-[11px] text-[#73726c]">{item.notes}</p>
+                        <p className="text-[11px] text-[#736E66]">{item.notes}</p>
                       </div>
                     </div>
 
                     <div className="flex items-center space-x-4">
-                      <span className="text-xs font-mono">
+                      <span className="text-xs font-mono font-medium">
                         {item.is_day_off
                           ? 'DAY OFF'
                           : `${item.shift_start?.slice(0, 5)} - ${item.shift_end?.slice(0, 5)}`}
                       </span>
                       <button
                         onClick={() => handleDeleteRoster(item.id)}
-                        className="text-rose-600 hover:text-rose-900 text-xs px-2 py-1 border border-rose-200"
+                        className="text-rose-600 hover:text-rose-900 text-xs px-2.5 py-1 border border-rose-200 rounded-md"
                       >
                         Delete
                       </button>
@@ -1360,18 +1392,18 @@ export default function AdminPage() {
         {/* TAB 5: STORE TASKS */}
         {activeTab === 'tasks' && (
           <div className="space-y-4">
-            <div className="flex justify-between items-center bg-white border border-[#eaeae5] p-4">
+            <div className="flex justify-between items-center bg-white border border-[#E8E2D5] p-4 rounded-2xl shadow-xs">
               <div>
-                <span className="text-xs uppercase tracking-wider font-semibold">
+                <span className="text-xs uppercase tracking-wider font-semibold text-[#191C1A]">
                   Store Operational Checklist
                 </span>
-                <p className="text-[11px] text-[#73726c]">
-                  Create daily tasks and procedures for store staff.
+                <p className="text-[11px] text-[#8A857C]">
+                  Create rituals and daily procedures for boutique store staff.
                 </p>
               </div>
               <button
                 onClick={() => setShowTaskForm(!showTaskForm)}
-                className="px-3.5 py-1.5 bg-[#171716] text-white text-xs uppercase tracking-wider hover:bg-neutral-800 transition"
+                className="px-4 py-2 bg-[#191C1A] text-white text-xs uppercase tracking-wider hover:bg-[#C26D53] rounded-full transition"
               >
                 {showTaskForm ? 'Close' : '+ New Task'}
               </button>
@@ -1380,28 +1412,28 @@ export default function AdminPage() {
             {showTaskForm && (
               <form
                 onSubmit={handleCreateTask}
-                className="bg-white border border-[#eaeae5] p-5 space-y-3"
+                className="bg-white border border-[#E8E2D5] p-5 rounded-2xl space-y-3 shadow-sm"
               >
                 <input
                   type="text"
-                  placeholder="Task title (e.g. Inspect Fitting Rooms)"
+                  placeholder="Task title (e.g. Inspect Fitting Rooms & Steam Garments)"
                   value={newTaskTitle}
                   onChange={(e) => setNewTaskTitle(e.target.value)}
                   required
-                  className="w-full p-2 text-xs border border-[#eaeae5] bg-[#fbfbf9]"
+                  className="w-full p-2 text-xs border border-[#E8E2D5] bg-[#FAF8F5] rounded"
                 />
                 <input
                   type="text"
                   placeholder="Task description..."
                   value={newTaskDesc}
                   onChange={(e) => setNewTaskDesc(e.target.value)}
-                  className="w-full p-2 text-xs border border-[#eaeae5] bg-[#fbfbf9]"
+                  className="w-full p-2 text-xs border border-[#E8E2D5] bg-[#FAF8F5] rounded"
                 />
                 <div className="flex justify-between items-center">
                   <select
                     value={newTaskPriority}
                     onChange={(e) => setNewTaskPriority(e.target.value as 'low' | 'normal' | 'high')}
-                    className="p-2 text-xs border border-[#eaeae5] bg-[#fbfbf9]"
+                    className="p-2 text-xs border border-[#E8E2D5] bg-[#FAF8F5] rounded"
                   >
                     <option value="low">Low Priority</option>
                     <option value="normal">Normal Priority</option>
@@ -1409,7 +1441,7 @@ export default function AdminPage() {
                   </select>
                   <button
                     type="submit"
-                    className="px-4 py-2 bg-black text-white text-xs uppercase tracking-widest"
+                    className="px-5 py-2 bg-[#191C1A] text-white text-xs uppercase tracking-widest hover:bg-[#C26D53] rounded-full transition"
                   >
                     Create Task
                   </button>
@@ -1417,32 +1449,32 @@ export default function AdminPage() {
               </form>
             )}
 
-            <div className="bg-white border border-[#eaeae5] divide-y divide-[#eaeae5]">
+            <div className="bg-white border border-[#E8E2D5] rounded-2xl divide-y divide-[#E8E2D5] overflow-hidden shadow-xs">
               {filteredTasks.length === 0 ? (
-                <p className="p-8 text-center text-xs text-[#73726c]">
+                <p className="p-8 text-center text-xs text-[#8A857C]">
                   No tasks logged for this store.
                 </p>
               ) : (
                 filteredTasks.map((t) => (
                   <div
                     key={t.id}
-                    className="p-4 flex justify-between items-center hover:bg-[#fbfbf9]"
+                    className="p-4 flex justify-between items-center hover:bg-[#FAF8F5]"
                   >
                     <div>
                       <div className="flex items-center space-x-2">
                         <span
                           className={`text-xs font-medium ${
-                            t.status === 'completed' ? 'line-through text-[#73726c]' : ''
+                            t.status === 'completed' ? 'line-through text-[#8A857C]' : 'text-[#191C1A]'
                           }`}
                         >
                           {t.title}
                         </span>
-                        <span className="text-[9px] uppercase tracking-wider px-1.5 py-0.5 bg-neutral-100 font-mono">
+                        <span className="text-[9px] uppercase tracking-wider px-2 py-0.5 bg-neutral-100 font-mono rounded">
                           {t.stores?.name || 'All Stores'}
                         </span>
                       </div>
                       {t.description && (
-                        <p className="text-[11px] text-[#73726c]">{t.description}</p>
+                        <p className="text-[11px] text-[#736E66] mt-0.5">{t.description}</p>
                       )}
                     </div>
 
@@ -1456,7 +1488,7 @@ export default function AdminPage() {
                       </span>
                       <button
                         onClick={() => handleDeleteTask(t.id)}
-                        className="text-xs text-rose-600 hover:text-rose-900 px-2 py-1 border border-rose-200"
+                        className="text-xs text-rose-600 hover:text-rose-900 px-2.5 py-1 border border-rose-200 rounded-md"
                       >
                         Delete
                       </button>
@@ -1471,18 +1503,18 @@ export default function AdminPage() {
         {/* TAB 6: BROADCAST NEWS */}
         {activeTab === 'news' && (
           <div className="space-y-4">
-            <div className="flex justify-between items-center bg-white border border-[#eaeae5] p-4">
+            <div className="flex justify-between items-center bg-white border border-[#E8E2D5] p-4 rounded-2xl shadow-xs">
               <div>
-                <span className="text-xs uppercase tracking-wider font-semibold">
+                <span className="text-xs uppercase tracking-wider font-semibold text-[#191C1A]">
                   Store Broadcast News
                 </span>
-                <p className="text-[11px] text-[#73726c]">
+                <p className="text-[11px] text-[#8A857C]">
                   Publish announcements for staff at selected store.
                 </p>
               </div>
               <button
                 onClick={() => setShowNewsForm(!showNewsForm)}
-                className="px-3.5 py-1.5 bg-[#171716] text-white text-xs uppercase tracking-wider hover:bg-neutral-800 transition"
+                className="px-4 py-2 bg-[#191C1A] text-white text-xs uppercase tracking-wider hover:bg-[#C26D53] rounded-full transition"
               >
                 {showNewsForm ? 'Close' : '+ New Broadcast'}
               </button>
@@ -1491,7 +1523,7 @@ export default function AdminPage() {
             {showNewsForm && (
               <form
                 onSubmit={handleCreateNews}
-                className="bg-white border border-[#eaeae5] p-5 space-y-3"
+                className="bg-white border border-[#E8E2D5] p-5 rounded-2xl space-y-3 shadow-sm"
               >
                 <input
                   type="text"
@@ -1499,7 +1531,7 @@ export default function AdminPage() {
                   value={newNewsTitle}
                   onChange={(e) => setNewNewsTitle(e.target.value)}
                   required
-                  className="w-full p-2 text-xs border border-[#eaeae5] bg-[#fbfbf9]"
+                  className="w-full p-2 text-xs border border-[#E8E2D5] bg-[#FAF8F5] rounded"
                 />
                 <textarea
                   rows={3}
@@ -1507,20 +1539,20 @@ export default function AdminPage() {
                   value={newNewsContent}
                   onChange={(e) => setNewNewsContent(e.target.value)}
                   required
-                  className="w-full p-2 text-xs border border-[#eaeae5] bg-[#fbfbf9] resize-none"
+                  className="w-full p-2 text-xs border border-[#E8E2D5] bg-[#FAF8F5] resize-none rounded"
                 />
                 <div className="flex justify-between items-center">
                   <select
                     value={newNewsPriority}
                     onChange={(e) => setNewNewsPriority(e.target.value as 'normal' | 'urgent')}
-                    className="p-2 text-xs border border-[#eaeae5] bg-[#fbfbf9]"
+                    className="p-2 text-xs border border-[#E8E2D5] bg-[#FAF8F5] rounded"
                   >
                     <option value="normal">Standard Priority</option>
-                    <option value="urgent">Urgent</option>
+                    <option value="urgent">Urgent Priority</option>
                   </select>
                   <button
                     type="submit"
-                    className="px-4 py-2 bg-black text-white text-xs uppercase tracking-widest"
+                    className="px-5 py-2 bg-[#191C1A] text-white text-xs uppercase tracking-widest hover:bg-[#C26D53] rounded-full transition"
                   >
                     Publish Broadcast
                   </button>
@@ -1530,27 +1562,27 @@ export default function AdminPage() {
 
             <div className="space-y-3">
               {filteredNews.length === 0 ? (
-                <div className="bg-white border border-[#eaeae5] p-8 text-center text-xs text-[#73726c]">
+                <div className="bg-white border border-[#E8E2D5] rounded-2xl p-8 text-center text-xs text-[#8A857C]">
                   No broadcasts found for this store.
                 </div>
               ) : (
                 filteredNews.map((n) => (
-                  <div key={n.id} className="bg-white border border-[#eaeae5] p-5 space-y-2">
+                  <div key={n.id} className="bg-white border border-[#E8E2D5] rounded-2xl p-5 space-y-2 shadow-xs">
                     <div className="flex justify-between items-start">
                       <div className="flex items-center space-x-2">
-                        <span className="text-sm font-medium">{n.title}</span>
-                        <span className="text-[10px] uppercase font-mono px-2 py-0.5 bg-neutral-100">
+                        <span className="text-sm font-medium text-[#191C1A]">{n.title}</span>
+                        <span className="text-[10px] uppercase font-mono px-2 py-0.5 bg-neutral-100 rounded">
                           {n.stores?.name || 'All Stores'}
                         </span>
                       </div>
                       <button
                         onClick={() => handleDeleteNews(n.id)}
-                        className="text-xs text-rose-600 hover:text-rose-900 border border-rose-200 px-2 py-0.5"
+                        className="text-xs text-rose-600 hover:text-rose-900 border border-rose-200 px-2 py-0.5 rounded"
                       >
                         Delete
                       </button>
                     </div>
-                    <p className="text-xs text-[#73726c]">{n.content}</p>
+                    <p className="text-xs text-[#736E66]">{n.content}</p>
                   </div>
                 ))
               )}

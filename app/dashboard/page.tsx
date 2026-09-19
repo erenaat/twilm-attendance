@@ -103,10 +103,16 @@ export default function DashboardPage() {
         storeName = resolvedStore?.name?.toLowerCase() || ''
       }
 
-      const isOffice = !storeName || storeName.includes('office') || storeName.includes('hq') || storeName.includes('headquarter')
-      const today = new Date().toISOString().split('T')[0]
+      const isOffice =
+        !storeName ||
+        storeName.includes('office') ||
+        storeName.includes('hq') ||
+        storeName.includes('headquarter')
 
-      // Today attendance
+      const today = new Date().toISOString().split('T')[0]
+      const dayOfWeek = new Date().getDay()
+
+      // 1. Fetch Today Attendance
       const { data: attData } = await supabase
         .from('attendance')
         .select('id, work_date, clock_in_at, clock_out_at, punctuality_status, status')
@@ -118,7 +124,7 @@ export default function DashboardPage() {
         setTodayRecord(attData)
       }
 
-      // Schedule resolution
+      // 2. Resolve Shift Schedule
       const { data: schData } = await supabase
         .from('schedules')
         .select('shift_start, shift_end, is_day_off')
@@ -126,7 +132,7 @@ export default function DashboardPage() {
         .eq('shift_date', today)
         .maybeSingle()
 
-      let activeStartMins = isOffice ? 9 * 60 : 9 * 60 + 40
+      let activeStartMins = 9 * 60 + 40 // Default Store Morning: 09:40
 
       if (schData && isMounted) {
         if (schData.is_day_off) {
@@ -138,9 +144,15 @@ export default function DashboardPage() {
         }
       } else if (isMounted) {
         if (isOffice) {
-          setScheduledDisplay('09:00 — 17:00')
-          activeStartMins = 9 * 60
+          if (dayOfWeek === 6) {
+            setScheduledDisplay('08:00 — 13:00')
+            activeStartMins = 8 * 60
+          } else {
+            setScheduledDisplay('09:00 — 17:00')
+            activeStartMins = 9 * 60
+          }
         } else {
+          // Boutiques: Batu Mejan, Nelayan, Bingin
           const nowHour = new Date().getHours()
           if (nowHour >= 11) {
             setScheduledDisplay('11:40 — 20:00')
@@ -152,7 +164,7 @@ export default function DashboardPage() {
         }
       }
 
-      // Punctuality rate
+      // 3. Punctuality Calculation
       const { data: allAtt } = await supabase
         .from('attendance')
         .select('work_date, clock_in_at, punctuality_status')
@@ -171,7 +183,16 @@ export default function DashboardPage() {
               hour12: false,
             }).format(clockDate).split(':')
             const clockInMins = parseInt(timeParts[0], 10) * 60 + parseInt(timeParts[1], 10)
-            const graceThreshold = (record.work_date === today ? activeStartMins : (isOffice ? 9 * 60 : 9 * 60 + 40)) + 5
+
+            const graceThreshold =
+              (record.work_date === today
+                ? activeStartMins
+                : isOffice
+                ? dayOfWeek === 6
+                  ? 8 * 60
+                  : 9 * 60
+                : 9 * 60 + 40) + 5
+
             if (clockInMins > graceThreshold) return false
           }
           return true
@@ -182,7 +203,7 @@ export default function DashboardPage() {
         setPunctualityRate(100)
       }
 
-      // Pending tasks
+      // 4. Pending Tasks
       const { count: taskCount } = await supabase
         .from('tasks')
         .select('*', { count: 'exact', head: true })
@@ -231,7 +252,7 @@ export default function DashboardPage() {
 
       <div className="max-w-5xl mx-auto px-4 pt-6 md:pt-8 space-y-6">
         {/* Luxury Hero Banner */}
-        <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-[#191C1A] via-[#242A27] to-[#141615] text-white p-7 sm:p-9 shadow-xl border border-[#E3DDD1]">
+        <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-[#191C1A] via-[#242A27] to-[#141615] text-white p-6 sm:p-9 shadow-xl border border-[#E3DDD1]">
           <div className="absolute top-0 right-0 w-80 h-80 bg-[#C26D53]/25 rounded-full blur-3xl pointer-events-none" />
           <div className="absolute -bottom-10 -left-10 w-64 h-64 bg-[#9E7B56]/20 rounded-full blur-2xl pointer-events-none" />
 
@@ -257,7 +278,7 @@ export default function DashboardPage() {
                 <span className="font-serif italic font-normal text-[#E8C5A8]">{displayName}</span>
               </h1>
               <p className="text-xs text-[#B5AEA4] mt-1.5 tracking-wide">
-                {currentDate} • Operating from <span className="text-[#FAF7F2] font-medium">{resolvedStoreName}</span>
+                {currentDate} • Branch: <span className="text-[#FAF7F2] font-medium">{resolvedStoreName}</span>
               </p>
             </div>
 
@@ -273,14 +294,14 @@ export default function DashboardPage() {
                 {currentTime || '00:00:00'}
               </span>
               <span className="text-[10px] font-mono text-[#C2B7A8] block mt-1">
-                Store Schedule: {scheduledDisplay}
+                Schedule: {scheduledDisplay}
               </span>
             </div>
           </div>
         </div>
 
         {/* Live Shift Card */}
-        <div className="rounded-2xl bg-white border border-[#E8E2D5] p-6 space-y-5 shadow-sm">
+        <div className="rounded-2xl bg-white border border-[#E8E2D5] p-5 sm:p-6 space-y-5 shadow-sm">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-[#E8E2D5] pb-5">
             <div className="flex items-center space-x-3.5">
               <div className="w-11 h-11 rounded-2xl bg-[#FBF0EC] border border-[#F2D7CE] flex items-center justify-center text-[#C26D53] text-base">
@@ -295,7 +316,7 @@ export default function DashboardPage() {
                     {!todayRecord?.clock_in_at
                       ? 'Ready to Clock In'
                       : todayRecord.clock_out_at
-                      ? 'Shift Completed for Today'
+                      ? 'Shift Completed'
                       : 'Currently On Floor'}
                   </span>
                   <span
@@ -323,7 +344,7 @@ export default function DashboardPage() {
             </Link>
           </div>
 
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 pt-1">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4 pt-1">
             <div className="p-3 rounded-xl bg-[#FAF8F5] border border-[#E8E2D5]/70">
               <span className="text-[10px] tracking-wider uppercase text-[#8A857C] font-mono block">
                 CLOCK IN
@@ -362,11 +383,11 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        {/* Triple Feature Cards */}
+        {/* Feature Cards */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <Link
             href="/attendance#history"
-            className="group rounded-2xl bg-white border border-[#E8E2D5] p-5 hover:border-[#C26D53] hover:shadow-md transition-all block relative overflow-hidden"
+            className="group rounded-2xl bg-white border border-[#E8E2D5] p-5 hover:border-[#C26D53] hover:shadow-md transition-all block"
           >
             <div className="flex justify-between items-start">
               <span className="text-[10px] tracking-widest uppercase text-[#8A857C] font-mono">
