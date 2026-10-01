@@ -148,18 +148,25 @@ export default function AttendancePage() {
         .eq('shift_date', today)
         .maybeSingle()
 
+      // 1. Prioritaskan jadwal dari roster jika admin sudah set
       if (schData && isMounted && schData.shift_start && schData.shift_end) {
         setScheduledStart(schData.shift_start.slice(0, 5))
         setScheduledEnd(schData.shift_end.slice(0, 5))
         setShiftName(schData.notes || 'Scheduled Shift')
       } else if (isMounted) {
+        // 2. Fallback aturan shift otomatis berdasarkan cabang jika belum ada roster
         const isOffice =
           !storeName ||
           storeName.includes('office') ||
           storeName.includes('hq') ||
           storeName.includes('headquarter')
 
-        const dayOfWeek = new Date().getDay() // 0: Sun, 1: Mon, ..., 6: Sat
+        const isBatuMejan = storeName.includes('batu mejan')
+        const isNelayan = storeName.includes('nelayan')
+        const isBingin = storeName.includes('bingin')
+
+        const dayOfWeek = new Date().getDay()
+        const nowHour = new Date().getHours()
 
         if (isOffice) {
           if (dayOfWeek === 6) {
@@ -173,18 +180,49 @@ export default function AttendancePage() {
             setScheduledEnd('17:00')
             setShiftName('Office Weekday')
           }
-        } else {
-          // Boutiques: Batu Mejan, Nelayan, Bingin
-          // Morning Shift (09:40 - 18:00) vs Afternoon Shift (11:40 - 20:00)
-          const nowHour = new Date().getHours()
+        } else if (isBatuMejan) {
+          // Batu Mejan: Pagi (09:40 - 18:00), Siang (11:40 - 20:00)
           if (nowHour >= 11) {
             setScheduledStart('11:40')
             setScheduledEnd('20:00')
-            setShiftName('Afternoon Shift')
+            setShiftName('Shift Siang')
           } else {
             setScheduledStart('09:40')
             setScheduledEnd('18:00')
-            setShiftName('Morning Shift')
+            setShiftName('Shift Pagi')
+          }
+        } else if (isNelayan) {
+          // Nelayan: Pagi (09:45 - 18:00), Siang (12:45 - 21:00)
+          if (nowHour >= 12) {
+            setScheduledStart('12:45')
+            setScheduledEnd('21:00')
+            setShiftName('Shift Siang')
+          } else {
+            setScheduledStart('09:45')
+            setScheduledEnd('18:00')
+            setShiftName('Shift Pagi')
+          }
+        } else if (isBingin) {
+          // Bingin: Pagi (08:45 - 17:00), Siang (11:45 - 20:00)
+          if (nowHour >= 11) {
+            setScheduledStart('11:45')
+            setScheduledEnd('20:00')
+            setShiftName('Shift Siang')
+          } else {
+            setScheduledStart('08:45')
+            setScheduledEnd('17:00')
+            setShiftName('Shift Pagi')
+          }
+        } else {
+          // Default outlet lainnya
+          if (nowHour >= 11) {
+            setScheduledStart('11:45')
+            setScheduledEnd('20:00')
+            setShiftName('Shift Siang')
+          } else {
+            setScheduledStart('08:45')
+            setScheduledEnd('17:00')
+            setShiftName('Shift Pagi')
           }
         }
       }
@@ -252,15 +290,60 @@ export default function AttendancePage() {
     }
   }, [router])
 
+  const storeNameLower = assignedStore?.name?.toLowerCase() || ''
+  const isOfficeStaff =
+    !storeNameLower ||
+    storeNameLower.includes('office') ||
+    storeNameLower.includes('hq') ||
+    storeNameLower.includes('headquarter')
+
+  const isBatuMejanStore = storeNameLower.includes('batu mejan')
+  const isNelayanStore = storeNameLower.includes('nelayan')
+  const isBinginStore = storeNameLower.includes('bingin')
+
+  // Pilihan manual 2 shift sesuai cabang toko
   const selectStoreShiftManually = (type: 'morning' | 'afternoon') => {
-    if (type === 'morning') {
-      setScheduledStart('09:40')
-      setScheduledEnd('18:00')
-      setShiftName('Morning Shift')
+    if (isNelayanStore) {
+      if (type === 'morning') {
+        setScheduledStart('09:45')
+        setScheduledEnd('18:00')
+        setShiftName('Shift Pagi')
+      } else {
+        setScheduledStart('12:45')
+        setScheduledEnd('21:00')
+        setShiftName('Shift Siang')
+      }
+    } else if (isBinginStore) {
+      if (type === 'morning') {
+        setScheduledStart('08:45')
+        setScheduledEnd('17:00')
+        setShiftName('Shift Pagi')
+      } else {
+        setScheduledStart('11:45')
+        setScheduledEnd('20:00')
+        setShiftName('Shift Siang')
+      }
+    } else if (isBatuMejanStore) {
+      if (type === 'morning') {
+        setScheduledStart('09:40')
+        setScheduledEnd('18:00')
+        setShiftName('Shift Pagi')
+      } else {
+        setScheduledStart('11:40')
+        setScheduledEnd('20:00')
+        setShiftName('Shift Siang')
+      }
     } else {
-      setScheduledStart('11:40')
-      setScheduledEnd('20:00')
-      setShiftName('Afternoon Shift')
+      // Default toko lainnya
+      if (type === 'morning') {
+        setScheduledStart('08:45')
+        setScheduledEnd('17:00')
+        setShiftName('Shift Pagi')
+      } else {
+        setScheduledStart('11:45')
+        setScheduledEnd('20:00')
+        setShiftName('Shift Siang')
+      }
     }
   }
 
@@ -355,7 +438,7 @@ export default function AttendancePage() {
   const handleClockIn = async () => {
     if (!profile) return
     if (!capturedPhoto) {
-      alert('Please snap a selfie first.')
+      alert('Silakan ambil foto selfie verifikasi terlebih dahulu.')
       return
     }
 
@@ -405,8 +488,8 @@ export default function AttendancePage() {
       setCapturedPhoto(null)
       alert(
         punctualityStatus === 'late'
-          ? `Clocked in (LATE: ${lateMinutes}m). Shift was ${scheduledStart}.`
-          : `Clocked in (ON-TIME). Have a wonderful shift!`
+          ? `Clock In berhasil (LATE: ${lateMinutes}m). Batas shift adalah ${scheduledStart}.`
+          : `Clock In berhasil (ON-TIME). Selamat bertugas!`
       )
     }
   }
@@ -414,7 +497,7 @@ export default function AttendancePage() {
   const submitClockOut = async () => {
     if (!profile || !todayRecord) return
     if (!capturedPhoto) {
-      alert('Please take a checkout selfie first.')
+      alert('Silakan ambil foto selfie checkout terlebih dahulu.')
       return
     }
 
@@ -455,7 +538,7 @@ export default function AttendancePage() {
         ...prev.filter((r) => r.id !== data.id),
       ])
       setCapturedPhoto(null)
-      alert('Shift completed!')
+      alert('Shift selesai dan catatan handover tersimpan!')
     }
   }
 
@@ -463,19 +546,29 @@ export default function AttendancePage() {
     ts ? new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '--:--'
 
   const firstName = profile?.full_name?.split(' ')[0] || 'Associate'
-  const storeNameLower = assignedStore?.name?.toLowerCase() || ''
-  const isOfficeStaff =
-    !storeNameLower ||
-    storeNameLower.includes('office') ||
-    storeNameLower.includes('hq') ||
-    storeNameLower.includes('headquarter')
+
+  // Tombol shift teks dinamis berdasarkan cabang
+  const morningShiftText = isNelayanStore
+    ? 'Pagi (09:45 - 18:00)'
+    : isBinginStore
+    ? 'Pagi (08:45 - 17:00)'
+    : 'Pagi (09:40 - 18:00)'
+
+  const afternoonShiftText = isNelayanStore
+    ? 'Siang (12:45 - 21:00)'
+    : isBinginStore
+    ? 'Siang (11:45 - 20:00)'
+    : 'Siang (11:40 - 20:00)'
+
+  const activeMorningTime = isNelayanStore ? '09:45' : isBinginStore ? '08:45' : '09:40'
+  const activeAfternoonTime = isNelayanStore ? '12:45' : isBinginStore ? '11:45' : '11:40'
 
   return (
     <main className="min-h-screen bg-[#F7F5F0] pb-24 text-[#1A1A18] overflow-x-hidden">
       <StaffNav userRole={profile?.role} />
 
       <div className="w-full max-w-xl mx-auto px-3.5 sm:px-6 pt-4 sm:pt-6 space-y-4">
-        {/* Mobile-Friendly Boutique Hero Card */}
+        {/* Hero Card */}
         <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-[#1E2320] via-[#2A2E2B] to-[#1A1A18] text-white p-4 sm:p-6 shadow-md border border-[#E3DDD1]">
           <div className="relative z-10 space-y-3">
             <div className="flex items-center justify-between">
@@ -502,41 +595,41 @@ export default function AttendancePage() {
         <div className="rounded-xl bg-white border border-[#E8E2D5] p-3.5 space-y-2.5 text-xs shadow-xs">
           <div className="flex items-center justify-between">
             <span className="text-[9px] uppercase tracking-wider text-[#8A857C] font-mono">
-              LOCATION
+              CABANG
             </span>
             <span className="font-medium text-[#1A1A18] text-xs truncate">
               {assignedStore?.name || 'Office / Headquarter'}
             </span>
           </div>
 
-          {/* 2 Simple Shift Buttons for Store Associates */}
+          {/* 2 Pilihan Shift Praktis untuk Staf Toko */}
           {!isOfficeStaff && !todayRecord?.clock_in_at && (
             <div className="border-t border-[#E8E2D5]/60 pt-2 space-y-1">
               <span className="text-[9px] uppercase tracking-wider text-[#8A857C] font-mono block">
-                CHOOSE STORE SHIFT:
+                PILIH SHIFT TOKO:
               </span>
               <div className="grid grid-cols-2 gap-2">
                 <button
                   type="button"
                   onClick={() => selectStoreShiftManually('morning')}
                   className={`py-1.5 px-2 rounded-lg text-[11px] font-mono transition border ${
-                    scheduledStart === '09:40'
+                    scheduledStart === activeMorningTime
                       ? 'bg-[#191C1A] text-white border-[#191C1A]'
                       : 'bg-[#FAF8F5] text-[#59544C] border-[#E8E2D5] hover:border-[#191C1A]'
                   }`}
                 >
-                  Morning (09:40 - 18:00)
+                  {morningShiftText}
                 </button>
                 <button
                   type="button"
                   onClick={() => selectStoreShiftManually('afternoon')}
                   className={`py-1.5 px-2 rounded-lg text-[11px] font-mono transition border ${
-                    scheduledStart === '11:40'
+                    scheduledStart === activeAfternoonTime
                       ? 'bg-[#191C1A] text-white border-[#191C1A]'
                       : 'bg-[#FAF8F5] text-[#59544C] border-[#E8E2D5] hover:border-[#191C1A]'
                   }`}
                 >
-                  Afternoon (11:40 - 20:00)
+                  {afternoonShiftText}
                 </button>
               </div>
             </div>
@@ -544,10 +637,10 @@ export default function AttendancePage() {
 
           <div className="border-t border-[#E8E2D5]/60 pt-2 flex items-start justify-between gap-2">
             <span className="text-[9px] uppercase tracking-wider text-[#8A857C] font-mono shrink-0">
-              GPS ADDR
+              LOKASI GPS
             </span>
             <span className="font-mono text-[10px] text-[#59544C] text-right line-clamp-2">
-              {detectingLocation ? 'Locating...' : detectedAddress || 'GPS locked'}
+              {detectingLocation ? 'Mencari lokasi...' : detectedAddress || 'GPS locked'}
             </span>
           </div>
         </div>
@@ -574,7 +667,7 @@ export default function AttendancePage() {
                     CAMERA VERIFICATION
                   </span>
                   <p className="text-[11px] text-[#736E66]">
-                    Snap a selfie to record presence
+                    Ambil foto selfie untuk verifikasi presensi
                   </p>
                 </div>
               )}
@@ -588,7 +681,7 @@ export default function AttendancePage() {
                   disabled={loading}
                   className="px-5 py-2 rounded-full bg-[#1A1A18] text-white text-[11px] uppercase tracking-wider hover:bg-[#C26D53] transition shadow-xs"
                 >
-                  Start Camera
+                  Nyalakan Kamera
                 </button>
               )}
 
@@ -597,7 +690,7 @@ export default function AttendancePage() {
                   onClick={captureSnapshot}
                   className="px-6 py-2 rounded-full bg-[#C26D53] text-white text-[11px] uppercase tracking-wider shadow-sm animate-pulse"
                 >
-                  Snap Selfie
+                  Ambil Foto
                 </button>
               )}
 
@@ -606,7 +699,7 @@ export default function AttendancePage() {
                   onClick={retakePhoto}
                   className="px-3.5 py-1.5 rounded-full border border-[#D6CEC0] bg-[#FAF8F5] text-[11px] text-[#635E56]"
                 >
-                  Retake Photo
+                  Ulangi Foto
                 </button>
               )}
             </div>
@@ -619,13 +712,13 @@ export default function AttendancePage() {
                 disabled={submitting || !capturedPhoto}
                 className="w-full py-3.5 rounded-xl bg-[#1A1A18] hover:bg-[#C26D53] disabled:bg-[#E8E2D5] disabled:text-[#A39E94] text-white text-xs uppercase tracking-[0.15em] font-medium transition shadow-xs"
               >
-                {submitting ? 'Recording...' : `Verify & Clock In (${scheduledStart})`}
+                {submitting ? 'Menyimpan...' : `Verifikasi & Clock In (${scheduledStart})`}
               </button>
             ) : !todayRecord?.clock_out_at ? (
               <button
                 onClick={() => {
                   if (!capturedPhoto) {
-                    alert('Please snap a checkout selfie first.')
+                    alert('Silakan ambil foto selfie checkout terlebih dahulu.')
                     return
                   }
                   setShowHandoverModal(true)
@@ -633,15 +726,15 @@ export default function AttendancePage() {
                 disabled={submitting}
                 className="w-full py-3.5 rounded-xl bg-[#2E473B] hover:bg-[#23382D] text-white text-xs uppercase tracking-[0.15em] font-medium transition shadow-xs"
               >
-                Shift Handover &amp; Clock Out
+                Handover Shift &amp; Clock Out
               </button>
             ) : (
               <div className="p-3 rounded-xl bg-[#EDF4F0] text-center border border-[#CFE2D7] text-xs">
                 <span className="font-medium text-[#2E473B] uppercase text-[10px] block">
-                  ✓ Shift Finished
+                  ✓ Shift Selesai Hari Ini
                 </span>
                 <p className="text-[#5B7869] text-[10px] font-mono mt-0.5">
-                  In: {formatTime(todayRecord.clock_in_at)} • Out: {formatTime(todayRecord.clock_out_at)}
+                  Masuk: {formatTime(todayRecord.clock_in_at)} • Pulang: {formatTime(todayRecord.clock_out_at)}
                 </p>
               </div>
             )}
@@ -656,10 +749,10 @@ export default function AttendancePage() {
         <div id="history" className="rounded-xl bg-white border border-[#E8E2D5] overflow-hidden shadow-xs">
           <div className="p-3 bg-[#FAF8F5] border-b border-[#E8E2D5] flex justify-between items-center">
             <span className="text-xs uppercase tracking-wider font-semibold text-[#1A1A18]">
-              Recent Logs
+              Riwayat Presensi Terakhir
             </span>
             <span className="text-[10px] font-mono text-[#8A857C]">
-              {historyRecords.length} Shifts
+              {historyRecords.length} Shift
             </span>
           </div>
 
@@ -667,17 +760,17 @@ export default function AttendancePage() {
             <table className="w-full text-left text-xs text-[#1A1A18]">
               <thead className="bg-[#FAF8F5] text-[9px] uppercase tracking-wider text-[#8A857C] border-b border-[#E8E2D5]">
                 <tr>
-                  <th className="p-2.5">Date</th>
-                  <th className="p-2.5">In</th>
+                  <th className="p-2.5">Tanggal</th>
+                  <th className="p-2.5">Masuk</th>
                   <th className="p-2.5">Status</th>
-                  <th className="p-2.5">Out</th>
+                  <th className="p-2.5">Pulang</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#E8E2D5]">
                 {historyRecords.length === 0 ? (
                   <tr>
                     <td colSpan={4} className="p-4 text-center text-xs text-[#8A857C]">
-                      No shifts recorded yet.
+                      Belum ada riwayat shift.
                     </td>
                   </tr>
                 ) : (
@@ -721,26 +814,26 @@ export default function AttendancePage() {
               <div className="space-y-2.5">
                 <div>
                   <label className="text-[9px] uppercase tracking-wider text-[#8A857C] font-mono block mb-1">
-                    Store Notes
+                    Catatan Toko
                   </label>
                   <textarea
                     rows={2}
                     value={handoverNote}
                     onChange={(e) => setHandoverNote(e.target.value)}
-                    placeholder="Customer reservations, restock needed..."
+                    placeholder="Reservasi customer, restock barang, fitting room..."
                     className="w-full p-2.5 text-xs rounded-xl bg-[#FAF8F5] border border-[#E8E2D5] text-[#1A1A18] focus:outline-none resize-none"
                   />
                 </div>
 
                 <div>
                   <label className="text-[9px] uppercase tracking-wider text-[#8A857C] font-mono block mb-1">
-                    Closing Cash (Optional)
+                    Saldo Kas Toko / Petty Cash (Opsional)
                   </label>
                   <input
                     type="text"
                     value={cashBalance}
                     onChange={(e) => setCashBalance(e.target.value)}
-                    placeholder="e.g. IDR 1.500.000"
+                    placeholder="Contoh: IDR 1.500.000 / Pas"
                     className="w-full p-2 text-xs rounded-xl bg-[#FAF8F5] border border-[#E8E2D5] text-[#1A1A18] font-mono focus:outline-none"
                   />
                 </div>
@@ -752,7 +845,7 @@ export default function AttendancePage() {
                   onClick={() => setShowHandoverModal(false)}
                   className="px-3 py-1.5 text-xs text-[#736E66]"
                 >
-                  Back
+                  Batal
                 </button>
                 <button
                   type="button"
@@ -760,7 +853,7 @@ export default function AttendancePage() {
                   disabled={submitting}
                   className="px-4 py-2 rounded-full bg-[#1A1A18] text-white text-xs uppercase tracking-wider disabled:opacity-40"
                 >
-                  {submitting ? 'Saving...' : 'Complete Out'}
+                  {submitting ? 'Menyimpan...' : 'Selesai & Clock Out'}
                 </button>
               </div>
             </div>

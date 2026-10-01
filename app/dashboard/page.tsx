@@ -109,8 +109,13 @@ export default function DashboardPage() {
         storeName.includes('hq') ||
         storeName.includes('headquarter')
 
+      const isBatuMejan = storeName.includes('batu mejan')
+      const isNelayan = storeName.includes('nelayan')
+      const isBingin = storeName.includes('bingin')
+
       const today = new Date().toISOString().split('T')[0]
       const dayOfWeek = new Date().getDay()
+      const nowHour = new Date().getHours()
 
       // 1. Fetch Today Attendance
       const { data: attData } = await supabase
@@ -124,15 +129,15 @@ export default function DashboardPage() {
         setTodayRecord(attData)
       }
 
-      // 2. Resolve Shift Schedule
+      // 2. Resolve Shift Schedule (PRIORITAS: Roster dari tabel schedules)
       const { data: schData } = await supabase
         .from('schedules')
-        .select('shift_start, shift_end, is_day_off')
+        .select('shift_start, shift_end, is_day_off, notes')
         .eq('user_id', session.user.id)
         .eq('shift_date', today)
         .maybeSingle()
 
-      let activeStartMins = 9 * 60 + 40 // Default Store Morning: 09:40
+      let activeStartMins = 9 * 60 + 40
 
       if (schData && isMounted) {
         if (schData.is_day_off) {
@@ -143,6 +148,7 @@ export default function DashboardPage() {
           activeStartMins = shH * 60 + shM
         }
       } else if (isMounted) {
+        // Fallback jika belum diset di roster
         if (isOffice) {
           if (dayOfWeek === 6) {
             setScheduledDisplay('08:00 — 13:00')
@@ -151,9 +157,7 @@ export default function DashboardPage() {
             setScheduledDisplay('09:00 — 17:00')
             activeStartMins = 9 * 60
           }
-        } else {
-          // Boutiques: Batu Mejan, Nelayan, Bingin
-          const nowHour = new Date().getHours()
+        } else if (isBatuMejan) {
           if (nowHour >= 11) {
             setScheduledDisplay('11:40 — 20:00')
             activeStartMins = 11 * 60 + 40
@@ -161,19 +165,61 @@ export default function DashboardPage() {
             setScheduledDisplay('09:40 — 18:00')
             activeStartMins = 9 * 60 + 40
           }
+        } else if (isNelayan) {
+          if (nowHour >= 12) {
+            setScheduledDisplay('12:45 — 21:00')
+            activeStartMins = 12 * 60 + 45
+          } else {
+            setScheduledDisplay('09:45 — 18:00')
+            activeStartMins = 9 * 60 + 45
+          }
+        } else if (isBingin) {
+          if (nowHour >= 11) {
+            setScheduledDisplay('11:45 — 20:00')
+            activeStartMins = 11 * 60 + 45
+          } else {
+            setScheduledDisplay('08:45 — 17:00')
+            activeStartMins = 8 * 60 + 45
+          }
+        } else {
+          // Outlet lainnya
+          if (nowHour >= 11) {
+            setScheduledDisplay('11:45 — 20:00')
+            activeStartMins = 11 * 60 + 45
+          } else {
+            setScheduledDisplay('08:45 — 17:00')
+            activeStartMins = 8 * 60 + 45
+          }
         }
       }
 
-      // 3. Punctuality Calculation
+      // 3. Punctuality Calculation yang Terintegrasi Roster
       const { data: allAtt } = await supabase
         .from('attendance')
         .select('work_date, clock_in_at, punctuality_status')
         .eq('user_id', session.user.id)
         .not('clock_in_at', 'is', null)
 
+      // Ambil seluruh roster masa lampau staf ini untuk menghitung akurasi punctuality
+      const { data: userAllSchedules } = await supabase
+        .from('schedules')
+        .select('shift_date, shift_start, is_day_off')
+        .eq('user_id', session.user.id)
+
+      const scheduleMap = new Map<string, string>()
+      if (userAllSchedules) {
+        userAllSchedules.forEach((s) => {
+          if (s.shift_start && !s.is_day_off) {
+            scheduleMap.set(s.shift_date, s.shift_start.slice(0, 5))
+          }
+        })
+      }
+
       if (allAtt && allAtt.length > 0 && isMounted) {
         const onTimeCount = allAtt.filter((record) => {
+          // Jika status di database sudah explicit 'late'
           if (record.punctuality_status === 'late') return false
+
           if (record.clock_in_at) {
             const clockDate = new Date(record.clock_in_at)
             const timeParts = new Intl.DateTimeFormat('en-GB', {
@@ -184,15 +230,28 @@ export default function DashboardPage() {
             }).format(clockDate).split(':')
             const clockInMins = parseInt(timeParts[0], 10) * 60 + parseInt(timeParts[1], 10)
 
-            const graceThreshold =
-              (record.work_date === today
-                ? activeStartMins
-                : isOffice
-                ? dayOfWeek === 6
-                  ? 8 * 60
-                  : 9 * 60
-                : 9 * 60 + 40) + 5
+            // Cek apakah ada jadwal roster untuk hari tersebut
+            let scheduledStartForDate = activeStartMins
+            const scheduledStartStr = scheduleMap.get(record.work_date)
 
+            if (scheduledStartStr) {
+              const [h, m] = scheduledStartStr.split(':').map(Number)
+              scheduledStartForDate = h * 60 + m
+            } else if (record.work_date !== today) {
+              // Fallback rule jika tidak ada record roster
+              const recordDayOfWeek = new Date(record.work_date).getDay()
+              if (isOffice) {
+                scheduledStartForDate = recordDayOfWeek === 6 ? 8 * 60 : 9 * 60
+              } else if (isBatuMejan) {
+                scheduledStartForDate = 9 * 60 + 40
+              } else if (isNelayan) {
+                scheduledStartForDate = 9 * 60 + 45
+              } else {
+                scheduledStartForDate = 8 * 60 + 45
+              }
+            }
+
+            const graceThreshold = scheduledStartForDate + 5 // toleransi 5 menit
             if (clockInMins > graceThreshold) return false
           }
           return true
@@ -278,7 +337,7 @@ export default function DashboardPage() {
                 <span className="font-serif italic font-normal text-[#E8C5A8]">{displayName}</span>
               </h1>
               <p className="text-xs text-[#B5AEA4] mt-1.5 tracking-wide">
-                {currentDate} • Branch: <span className="text-[#FAF7F2] font-medium">{resolvedStoreName}</span>
+                {currentDate} • Cabang: <span className="text-[#FAF7F2] font-medium">{resolvedStoreName}</span>
               </p>
             </div>
 
@@ -294,7 +353,7 @@ export default function DashboardPage() {
                 {currentTime || '00:00:00'}
               </span>
               <span className="text-[10px] font-mono text-[#C2B7A8] block mt-1">
-                Schedule: {scheduledDisplay}
+                Jadwal: {scheduledDisplay}
               </span>
             </div>
           </div>
@@ -309,15 +368,15 @@ export default function DashboardPage() {
               </div>
               <div>
                 <span className="text-[10px] tracking-widest uppercase text-[#8A857C] font-mono block">
-                  ACTIVE SHIFT STATUS
+                  STATUS SHIFT HARI INI
                 </span>
                 <div className="flex items-center space-x-2 mt-0.5">
                   <span className="text-lg sm:text-xl font-medium tracking-tight text-[#191C1A]">
                     {!todayRecord?.clock_in_at
-                      ? 'Ready to Clock In'
+                      ? 'Belum Clock In'
                       : todayRecord.clock_out_at
-                      ? 'Shift Completed'
-                      : 'Currently On Floor'}
+                      ? 'Shift Selesai'
+                      : 'Sedang Aktif Bekerja'}
                   </span>
                   <span
                     className={`w-2.5 h-2.5 rounded-full ${
@@ -337,10 +396,10 @@ export default function DashboardPage() {
               className="px-6 py-3 rounded-full bg-[#191C1A] hover:bg-[#C26D53] text-white text-xs uppercase tracking-[0.2em] font-medium transition-all shadow-sm text-center"
             >
               {!todayRecord?.clock_in_at
-                ? '✦ Clock In Now'
+                ? '✦ Clock In Sekarang'
                 : todayRecord.clock_out_at
-                ? 'View Logbook'
-                : 'Complete & Clock Out'}
+                ? 'Lihat Riwayat Shift'
+                : 'Handover & Clock Out'}
             </Link>
           </div>
 
@@ -365,7 +424,7 @@ export default function DashboardPage() {
 
             <div className="p-3 rounded-xl bg-[#FAF8F5] border border-[#E8E2D5]/70">
               <span className="text-[10px] tracking-wider uppercase text-[#8A857C] font-mono block">
-                FLOOR TIME
+                DURASI KERJA
               </span>
               <span className="text-sm sm:text-base font-mono font-medium text-[#191C1A] mt-1 block">
                 {shiftDuration}
@@ -374,7 +433,7 @@ export default function DashboardPage() {
 
             <div className="p-3 rounded-xl bg-[#FAF8F5] border border-[#E8E2D5]/70">
               <span className="text-[10px] tracking-wider uppercase text-[#8A857C] font-mono block">
-                SCHEDULE
+                JADWAL ROSTER
               </span>
               <span className="text-sm sm:text-base font-mono font-medium text-[#191C1A] mt-1 block">
                 {scheduledDisplay}
@@ -391,7 +450,7 @@ export default function DashboardPage() {
           >
             <div className="flex justify-between items-start">
               <span className="text-[10px] tracking-widest uppercase text-[#8A857C] font-mono">
-                PUNCTUALITY
+                KETEPATAN WAKTU
               </span>
               <span
                 className={`text-[9px] uppercase px-2 py-0.5 rounded-full font-mono font-medium ${
@@ -407,7 +466,7 @@ export default function DashboardPage() {
               <span className="text-3xl font-light font-mono text-[#191C1A] group-hover:text-[#C26D53] transition-colors">
                 {punctualityRate}%
               </span>
-              <p className="text-[11px] text-[#8A857C] mt-1">Tap to review shift history ✦</p>
+              <p className="text-[11px] text-[#8A857C] mt-1">Klik untuk lihat log riwayat ✦</p>
             </div>
           </Link>
 
@@ -420,14 +479,14 @@ export default function DashboardPage() {
                 STORE RITUALS
               </span>
               <span className="text-[9px] uppercase px-2 py-0.5 rounded-full bg-[#FAF0E6] text-[#9E7B56] border border-[#EEDCC7] font-mono font-medium">
-                ACTIVE TODAY
+                HARI INI
               </span>
             </div>
             <div className="mt-3">
               <span className="text-3xl font-light font-mono text-[#191C1A] group-hover:text-[#2E473B] transition-colors">
                 {pendingTaskCount}
               </span>
-              <p className="text-[11px] text-[#8A857C] mt-1">Checklist items to inspect ✦</p>
+              <p className="text-[11px] text-[#8A857C] mt-1">Checklist harian toko ✦</p>
             </div>
           </Link>
 
@@ -437,17 +496,17 @@ export default function DashboardPage() {
           >
             <div className="flex justify-between items-start">
               <span className="text-[10px] tracking-widest uppercase text-[#8A857C] font-mono">
-                LEAVE ENTITLEMENT
+                SISA CUTI
               </span>
               <span className="text-[9px] uppercase px-2 py-0.5 rounded-full bg-[#F2EFE8] text-[#635E56] font-mono">
-                ANNUAL
+                TAHUNAN
               </span>
             </div>
             <div className="mt-3">
               <span className="text-3xl font-light font-mono text-[#191C1A] group-hover:text-[#9E7B56] transition-colors">
                 12
               </span>
-              <p className="text-[11px] text-[#8A857C] mt-1">Available balance days ✦</p>
+              <p className="text-[11px] text-[#8A857C] mt-1">Hari cuti tersedia ✦</p>
             </div>
           </Link>
         </div>

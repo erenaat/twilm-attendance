@@ -115,21 +115,14 @@ export default function AdminPage() {
 
   // Navigation & Filtering
   const [selectedStoreFilter, setSelectedStoreFilter] = useState<string>('all')
+  const [selectedMonth, setSelectedMonth] = useState<string>(() => {
+    const now = new Date()
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
+  })
+
   const [activeTab, setActiveTab] = useState<
     'attendance' | 'leave' | 'schedule' | 'tasks' | 'news' | 'team'
   >('attendance')
-
-  // Date Range Filter States (Default to Current Month)
-  const [filterStartDate, setFilterStartDate] = useState<string>(() => {
-    const now = new Date()
-    const firstDay = new Date(now.getFullYear(), now.getMonth(), 1)
-    return firstDay.toISOString().split('T')[0]
-  })
-  const [filterEndDate, setFilterEndDate] = useState<string>(() => {
-    const now = new Date()
-    const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0)
-    return lastDay.toISOString().split('T')[0]
-  })
 
   // Form Modals / Expanders
   const [showRosterForm, setShowRosterForm] = useState(false)
@@ -166,34 +159,10 @@ export default function AdminPage() {
     return Array.isArray(s) ? s[0]?.name || '' : s.name || ''
   }
 
-  // Set month filter shortcuts
-  const selectMonthShortcut = (type: 'this_month' | 'last_month' | 'september_2026') => {
-    if (type === 'this_month') {
-      const now = new Date()
-      const first = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0]
-      const last = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split('T')[0]
-      setFilterStartDate(first)
-      setFilterEndDate(last)
-    } else if (type === 'last_month') {
-      const now = new Date()
-      const first = new Date(now.getFullYear(), now.getMonth() - 1, 1).toISOString().split('T')[0]
-      const last = new Date(now.getFullYear(), now.getMonth(), 0).toISOString().split('T')[0]
-      setFilterStartDate(first)
-      setFilterEndDate(last)
-    } else if (type === 'september_2026') {
-      setFilterStartDate('2026-09-01')
-      setFilterEndDate('2026-09-30')
-    }
-  }
-
   const fetchAllAdminData = useCallback(async () => {
-    setLoading(true)
-
-    // 1. Fetch Stores
     const { data: storeData } = await supabase.from('stores').select('id, name').order('name')
     if (storeData) setStores(storeData)
 
-    // 2. Fetch Profiles
     const { data: staffData } = await supabase
       .from('profiles')
       .select('id, full_name, email, role, employee_code, store_id, stores(id, name)')
@@ -203,36 +172,33 @@ export default function AdminPage() {
       setNewRosterUser((prev) => prev || (staffData.length > 0 ? staffData[0].id : ''))
     }
 
-    // 3. Fetch Full Attendance based on chosen Date Range (No 100-row limit!)
-    let query = supabase
+    // Attendance query with Month Range filter to avoid arbitrary row cut-offs
+    let attQuery = supabase
       .from('attendance')
       .select('*, profiles(id, full_name, email, store_id), stores(id, name)')
       .order('work_date', { ascending: false })
 
-    if (filterStartDate) {
-      query = query.gte('work_date', filterStartDate)
-    }
-    if (filterEndDate) {
-      query = query.lte('work_date', filterEndDate)
-    }
-
-    // Set large limit to handle full company month records
-    const { data: attData, error: attErr } = await query.limit(2000)
-
-    if (attErr) {
-      console.error('Error fetching attendance logs:', attErr.message)
-    } else if (attData) {
-      setRecords(attData as unknown as AttendanceRecord[])
+    if (selectedMonth && selectedMonth !== 'all') {
+      const [yearStr, monthStr] = selectedMonth.split('-')
+      const y = parseInt(yearStr, 10)
+      const m = parseInt(monthStr, 10)
+      const startDate = `${selectedMonth}-01`
+      const lastDay = new Date(y, m, 0).getDate()
+      const endDate = `${selectedMonth}-${String(lastDay).padStart(2, '0')}`
+      attQuery = attQuery.gte('work_date', startDate).lte('work_date', endDate)
+    } else {
+      attQuery = attQuery.limit(5000)
     }
 
-    // 4. Fetch Leave Requests
+    const { data: attData } = await attQuery
+    if (attData) setRecords(attData as unknown as AttendanceRecord[])
+
     const { data: lData } = await supabase
       .from('leave_requests')
       .select('*, profiles(id, full_name, email, store_id)')
       .order('created_at', { ascending: false })
     if (lData) setLeaveRequests(lData as unknown as LeaveRequestItem[])
 
-    // 5. Fetch Schedules
     const { data: schData } = await supabase
       .from('schedules')
       .select('*, profiles(id, full_name, email, store_id), stores(id, name)')
@@ -240,14 +206,12 @@ export default function AdminPage() {
       .limit(100)
     if (schData) setSchedules(schData as unknown as ScheduleItem[])
 
-    // 6. Fetch Tasks
     const { data: tskData } = await supabase
       .from('tasks')
       .select('*, stores(id, name)')
       .order('created_at', { ascending: false })
     if (tskData) setTasks(tskData as unknown as TaskItem[])
 
-    // 7. Fetch Announcements
     const { data: newsData } = await supabase
       .from('announcements')
       .select('*, stores(id, name)')
@@ -255,7 +219,7 @@ export default function AdminPage() {
     if (newsData) setAnnouncements(newsData as unknown as AnnouncementItem[])
 
     setLoading(false)
-  }, [filterStartDate, filterEndDate])
+  }, [selectedMonth])
 
   useEffect(() => {
     let isMounted = true
@@ -297,16 +261,21 @@ export default function AdminPage() {
     }
   }, [router, fetchAllAdminData])
 
-  // Automatically adjust shift times based on staff member and day of the week
+  // Automatically adjust default roster shift based on staff and location
   const handleSelectStaffForRoster = useCallback((userId: string, dateOverride?: string) => {
     setNewRosterUser(userId)
     const selectedStaff = allStaffList.find((s) => s.id === userId)
     const storeName = resolveStoreName(selectedStaff?.stores).toLowerCase()
+
     const isOffice =
       !storeName ||
       storeName.includes('office') ||
       storeName.includes('hq') ||
       storeName.includes('headquarter')
+
+    const isBatuMejan = storeName.includes('batu mejan')
+    const isNelayan = storeName.includes('nelayan')
+    const isBingin = storeName.includes('bingin')
 
     const targetDate = dateOverride || newRosterDate
     let dayOfWeek = new Date().getDay()
@@ -324,10 +293,22 @@ export default function AdminPage() {
         setNewRosterEnd('17:00')
         setNewRosterNotes('Office Mon-Fri (09:00 - 17:00)')
       }
-    } else {
+    } else if (isBatuMejan) {
       setNewRosterStart('09:40')
       setNewRosterEnd('18:00')
-      setNewRosterNotes('Morning Shift (09:40 - 18:00)')
+      setNewRosterNotes('Batu Mejan - Shift Pagi (09:40 - 18:00)')
+    } else if (isNelayan) {
+      setNewRosterStart('09:45')
+      setNewRosterEnd('18:00')
+      setNewRosterNotes('Nelayan - Shift Pagi (09:45 - 18:00)')
+    } else if (isBingin) {
+      setNewRosterStart('08:45')
+      setNewRosterEnd('17:00')
+      setNewRosterNotes('Bingin - Shift Pagi (08:45 - 17:00)')
+    } else {
+      setNewRosterStart('08:45')
+      setNewRosterEnd('17:00')
+      setNewRosterNotes('Shift Pagi (08:45 - 17:00)')
     }
   }, [allStaffList, newRosterDate])
 
@@ -339,28 +320,52 @@ export default function AdminPage() {
     setShowRosterForm(!showRosterForm)
   }
 
-  // Quick Shift Preset Switcher
-  const applyShiftPreset = (type: 'office_weekday' | 'office_saturday' | 'morning' | 'afternoon') => {
-    if (type === 'office_weekday') {
-      setNewRosterStart('09:00')
-      setNewRosterEnd('17:00')
-      setNewRosterNotes('Office Mon-Fri (09:00 - 17:00)')
-      setNewRosterIsOff(false)
-    } else if (type === 'office_saturday') {
-      setNewRosterStart('08:00')
-      setNewRosterEnd('13:00')
-      setNewRosterNotes('Office Saturday (08:00 - 13:00)')
-      setNewRosterIsOff(false)
-    } else if (type === 'morning') {
-      setNewRosterStart('09:40')
-      setNewRosterEnd('18:00')
-      setNewRosterNotes('Morning Shift (09:40 - 18:00)')
-      setNewRosterIsOff(false)
-    } else if (type === 'afternoon') {
-      setNewRosterStart('11:40')
-      setNewRosterEnd('20:00')
-      setNewRosterNotes('Afternoon Shift (11:40 - 20:00)')
-      setNewRosterIsOff(false)
+  // 1-Click Shift Preset Switcher
+  const applyShiftPreset = (type: string) => {
+    setNewRosterIsOff(false)
+    switch (type) {
+      case 'office_weekday':
+        setNewRosterStart('09:00')
+        setNewRosterEnd('17:00')
+        setNewRosterNotes('Office Mon-Fri (09:00 - 17:00)')
+        break
+      case 'office_sat':
+        setNewRosterStart('08:00')
+        setNewRosterEnd('13:00')
+        setNewRosterNotes('Office Saturday (08:00 - 13:00)')
+        break
+      case 'bm_pagi':
+        setNewRosterStart('09:40')
+        setNewRosterEnd('18:00')
+        setNewRosterNotes('Batu Mejan - Shift Pagi (09:40 - 18:00)')
+        break
+      case 'bm_siang':
+        setNewRosterStart('11:40')
+        setNewRosterEnd('20:00')
+        setNewRosterNotes('Batu Mejan - Shift Siang (11:40 - 20:00)')
+        break
+      case 'nelayan_pagi':
+        setNewRosterStart('09:45')
+        setNewRosterEnd('18:00')
+        setNewRosterNotes('Nelayan - Shift Pagi (09:45 - 18:00)')
+        break
+      case 'nelayan_siang':
+        setNewRosterStart('12:45')
+        setNewRosterEnd('21:00')
+        setNewRosterNotes('Nelayan - Shift Siang (12:45 - 21:00)')
+        break
+      case 'bingin_pagi':
+        setNewRosterStart('08:45')
+        setNewRosterEnd('17:00')
+        setNewRosterNotes('Bingin - Shift Pagi (08:45 - 17:00)')
+        break
+      case 'bingin_siang':
+        setNewRosterStart('11:45')
+        setNewRosterEnd('20:00')
+        setNewRosterNotes('Bingin - Shift Siang (11:45 - 20:00)')
+        break
+      default:
+        break
     }
   }
 
@@ -372,7 +377,7 @@ export default function AdminPage() {
       .eq('id', id)
 
     if (error) {
-      alert('Error updating leave: ' + error.message)
+      alert('Error: ' + error.message)
     } else {
       setLeaveRequests((prev) =>
         prev.map((r) => (r.id === id ? { ...r, status: decision } : r))
@@ -380,11 +385,11 @@ export default function AdminPage() {
     }
   }
 
-  // Create Roster Shift
+  // Create / Update Roster Shift
   const handleCreateRoster = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!newRosterUser || !newRosterDate) {
-      alert('Select staff member and shift date.')
+      alert('Pilih staff dan tanggal shift.')
       return
     }
 
@@ -412,27 +417,26 @@ export default function AdminPage() {
       .single()
 
     if (error) {
-      alert('Failed to save shift: ' + error.message)
+      alert('Gagal menyimpan jadwal: ' + error.message)
     } else if (data) {
       setSchedules((prev) => [
         data as unknown as ScheduleItem,
         ...prev.filter((s) => s.id !== data.id),
       ])
       setShowRosterForm(false)
-      alert('Shift assigned successfully.')
+      alert('Shift roster berhasil disimpan dan terintegrasi!')
     }
   }
 
-  // Delete Roster Shift
   const handleDeleteRoster = async (id: string) => {
-    if (!confirm('Delete this shift?')) return
+    if (!confirm('Hapus shift ini?')) return
     const { error } = await supabase.from('schedules').delete().eq('id', id)
     if (!error) {
       setSchedules((prev) => prev.filter((s) => s.id !== id))
     }
   }
 
-  // Create Task
+  // Tasks & News
   const handleCreateTask = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!newTaskTitle) return
@@ -453,7 +457,7 @@ export default function AdminPage() {
       .single()
 
     if (error) {
-      alert('Failed to create task: ' + error.message)
+      alert('Error: ' + error.message)
     } else if (data) {
       setTasks((prev) => [data as unknown as TaskItem, ...prev])
       setShowTaskForm(false)
@@ -462,16 +466,14 @@ export default function AdminPage() {
     }
   }
 
-  // Delete Task
   const handleDeleteTask = async (id: string) => {
-    if (!confirm('Delete this task?')) return
+    if (!confirm('Hapus task ini?')) return
     const { error } = await supabase.from('tasks').delete().eq('id', id)
     if (!error) {
       setTasks((prev) => prev.filter((t) => t.id !== id))
     }
   }
 
-  // Create Announcement
   const handleCreateNews = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!newNewsTitle || !newNewsContent) return
@@ -491,7 +493,7 @@ export default function AdminPage() {
       .single()
 
     if (error) {
-      alert('Failed to publish broadcast: ' + error.message)
+      alert('Error: ' + error.message)
     } else if (data) {
       setAnnouncements((prev) => [data as unknown as AnnouncementItem, ...prev])
       setShowNewsForm(false)
@@ -500,16 +502,15 @@ export default function AdminPage() {
     }
   }
 
-  // Delete News
   const handleDeleteNews = async (id: string) => {
-    if (!confirm('Delete this broadcast?')) return
+    if (!confirm('Hapus broadcast ini?')) return
     const { error } = await supabase.from('announcements').delete().eq('id', id)
     if (!error) {
       setAnnouncements((prev) => prev.filter((n) => n.id !== id))
     }
   }
 
-  // Edit Team Member Handlers
+  // Inline team edit
   const startEditStaff = (staff: ProfileSummary) => {
     setEditingStaffId(staff.id)
     setEditEmployeeCode(staff.employee_code || '')
@@ -523,7 +524,6 @@ export default function AdminPage() {
 
   const handleSaveStaff = async (staffId: string) => {
     setSavingStaff(true)
-
     const { error } = await supabase
       .from('profiles')
       .update({
@@ -536,7 +536,7 @@ export default function AdminPage() {
     setSavingStaff(false)
 
     if (error) {
-      alert('Failed to update staff: ' + error.message)
+      alert('Error: ' + error.message)
     } else {
       setAllStaffList((prev) =>
         prev.map((s) =>
@@ -598,10 +598,10 @@ export default function AdminPage() {
       .replace(/'/g, '&apos;')
   }
 
-  // Export File Excel (.xls) with Complete Date Range Scope
+  // Export File Excel (.xls)
   const exportToExcelSheet = () => {
     if (filteredAttendance.length === 0) {
-      alert('Tidak ada data absensi pada periode tanggal yang dipilih untuk diekspor.')
+      alert('Tidak ada data absensi untuk diekspor.')
       return
     }
 
@@ -609,6 +609,8 @@ export default function AdminPage() {
       selectedStoreFilter === 'all'
         ? 'All Stores & Office'
         : stores.find((s) => s.id === selectedStoreFilter)?.name || 'Store'
+
+    const todayStr = new Date().toISOString().split('T')[0]
 
     const columns = [
       { header: 'Date', width: 90 },
@@ -756,7 +758,7 @@ export default function AdminPage() {
     <Cell ss:StyleID="TitleReport"><Data ss:Type="String">TWILM — STORE ATTENDANCE &amp; PAYROLL LOGBOOK</Data></Cell>
    </Row>
    <Row ss:Height="18">
-    <Cell ss:StyleID="SubTitle"><Data ss:Type="String">Branch: ${escapeXml(branchName)} | Period: ${escapeXml(filterStartDate)} to ${escapeXml(filterEndDate)} | Total Records: ${filteredAttendance.length}</Data></Cell>
+    <Cell ss:StyleID="SubTitle"><Data ss:Type="String">Branch: ${escapeXml(branchName)} | Periode: ${escapeXml(selectedMonth)} | Total: ${filteredAttendance.length}</Data></Cell>
    </Row>
    <Row ss:Height="10"/>
    <Row ss:Height="26">
@@ -784,7 +786,7 @@ export default function AdminPage() {
         ? 'ALL_STORES'
         : stores.find((s) => s.id === selectedStoreFilter)?.name.replace(/\s+/g, '_') || 'STORE'
 
-    link.setAttribute('download', `TWILM_Attendance_${fileBranch}_${filterStartDate}_to_${filterEndDate}.xls`)
+    link.setAttribute('download', `TWILM_Attendance_${fileBranch}_${selectedMonth}_${todayStr}.xls`)
     document.body.appendChild(link)
     link.click()
     document.body.removeChild(link)
@@ -811,6 +813,19 @@ export default function AdminPage() {
           </div>
 
           <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+            {/* Month Filter */}
+            <div className="flex items-center space-x-2 bg-white border border-[#E8E2D5] px-3 py-1.5 rounded-full shadow-xs">
+              <span className="text-[10px] uppercase tracking-wider text-[#8A857C] font-mono">
+                Bulan:
+              </span>
+              <input
+                type="month"
+                value={selectedMonth}
+                onChange={(e) => setSelectedMonth(e.target.value)}
+                className="text-xs bg-transparent text-[#191C1A] font-medium focus:outline-none cursor-pointer font-mono"
+              />
+            </div>
+
             {/* Store Switcher */}
             <div className="flex items-center space-x-2 bg-white border border-[#E8E2D5] px-3 py-1.5 rounded-full shadow-xs">
               <span className="text-[10px] uppercase tracking-wider text-[#8A857C] font-mono">
@@ -821,7 +836,7 @@ export default function AdminPage() {
                 onChange={(e) => setSelectedStoreFilter(e.target.value)}
                 className="text-xs bg-transparent text-[#191C1A] font-medium focus:outline-none cursor-pointer font-sans"
               >
-                <option value="all">All Boutiques &amp; Office</option>
+                <option value="all">Semua Cabang &amp; Office</option>
                 {stores.map((s) => (
                   <option key={s.id} value={s.id}>
                     {s.name}
@@ -832,10 +847,9 @@ export default function AdminPage() {
 
             <button
               onClick={exportToExcelSheet}
-              className="px-4 py-1.5 bg-[#2E473B] text-white text-[11px] uppercase tracking-wider hover:bg-[#23382D] rounded-full transition shadow-xs flex items-center space-x-1.5"
+              className="px-3.5 py-1.5 bg-white border border-[#E8E2D5] text-[11px] uppercase tracking-wider hover:bg-neutral-50 rounded-full transition shadow-xs"
             >
-              <span>↓</span>
-              <span>Export Full Excel</span>
+              Export Excel Sheet
             </button>
             <button
               onClick={fetchAllAdminData}
@@ -843,53 +857,6 @@ export default function AdminPage() {
             >
               Refresh
             </button>
-          </div>
-        </div>
-
-        {/* Date Range Selector Strip for Payroll & Monthly Attendance */}
-        <div className="bg-white border border-[#E8E2D5] p-3.5 sm:p-4 rounded-2xl flex flex-col md:flex-row md:items-center justify-between gap-3 shadow-xs">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-[10px] uppercase tracking-wider text-[#8A857C] font-mono">
-              Period Preset:
-            </span>
-            <button
-              type="button"
-              onClick={() => selectMonthShortcut('september_2026')}
-              className="px-3 py-1 text-[11px] font-mono rounded-full border border-[#E8E2D5] bg-[#FAF8F5] hover:bg-[#191C1A] hover:text-white transition"
-            >
-              September 2026 (Full Month)
-            </button>
-            <button
-              type="button"
-              onClick={() => selectMonthShortcut('this_month')}
-              className="px-3 py-1 text-[11px] font-mono rounded-full border border-[#E8E2D5] bg-[#FAF8F5] hover:bg-[#191C1A] hover:text-white transition"
-            >
-              Current Month
-            </button>
-            <button
-              type="button"
-              onClick={() => selectMonthShortcut('last_month')}
-              className="px-3 py-1 text-[11px] font-mono rounded-full border border-[#E8E2D5] bg-[#FAF8F5] hover:bg-[#191C1A] hover:text-white transition"
-            >
-              Previous Month
-            </button>
-          </div>
-
-          <div className="flex items-center space-x-2 text-xs">
-            <span className="text-[10px] uppercase text-[#8A857C] font-mono">From:</span>
-            <input
-              type="date"
-              value={filterStartDate}
-              onChange={(e) => setFilterStartDate(e.target.value)}
-              className="p-1.5 border border-[#E8E2D5] rounded-lg font-mono text-[11px] bg-[#FAF8F5]"
-            />
-            <span className="text-[10px] uppercase text-[#8A857C] font-mono">To:</span>
-            <input
-              type="date"
-              value={filterEndDate}
-              onChange={(e) => setFilterEndDate(e.target.value)}
-              className="p-1.5 border border-[#E8E2D5] rounded-lg font-mono text-[11px] bg-[#FAF8F5]"
-            />
           </div>
         </div>
 
@@ -960,18 +927,6 @@ export default function AdminPage() {
         {/* TAB 1: ATTENDANCE */}
         {activeTab === 'attendance' && (
           <div className="bg-white border border-[#E8E2D5] rounded-2xl overflow-hidden shadow-xs">
-            <div className="p-3.5 bg-[#FAF8F5] border-b border-[#E8E2D5] flex justify-between items-center text-xs">
-              <span className="font-mono text-[#8A857C]">
-                Showing {filteredAttendance.length} records between {filterStartDate} and {filterEndDate}
-              </span>
-              <button
-                onClick={exportToExcelSheet}
-                className="text-[11px] font-mono text-[#2E473B] font-medium hover:underline"
-              >
-                Download this table as Excel →
-              </button>
-            </div>
-
             <div className="overflow-x-auto">
               <table className="w-full text-left text-xs text-[#191C1A]">
                 <thead className="bg-[#FAF8F5] text-[10px] uppercase tracking-wider text-[#8A857C] border-b border-[#E8E2D5]">
@@ -990,13 +945,13 @@ export default function AdminPage() {
                   {loading ? (
                     <tr>
                       <td colSpan={8} className="p-8 text-center text-xs text-[#8A857C]">
-                        Loading logs for selected period...
+                        Loading logs...
                       </td>
                     </tr>
                   ) : filteredAttendance.length === 0 ? (
                     <tr>
                       <td colSpan={8} className="p-8 text-center text-xs text-[#8A857C]">
-                        No logs found between {filterStartDate} and {filterEndDate}.
+                        No logs for this store.
                       </td>
                     </tr>
                   ) : (
@@ -1015,7 +970,6 @@ export default function AdminPage() {
                         </td>
                         <td className="p-3.5 whitespace-nowrap font-mono">{rec.work_date}</td>
 
-                        {/* Clock In */}
                         <td className="p-3.5 whitespace-nowrap font-mono">
                           <div>{formatTime(rec.clock_in_at)}</div>
                           {rec.punctuality_status === 'late' ? (
@@ -1029,7 +983,6 @@ export default function AdminPage() {
                           ) : null}
                         </td>
 
-                        {/* Selfie Preview */}
                         <td className="p-3.5">
                           {rec.clock_in_photo_url ? (
                             <a href={rec.clock_in_photo_url} target="_blank" rel="noreferrer">
@@ -1048,7 +1001,6 @@ export default function AdminPage() {
                           )}
                         </td>
 
-                        {/* Clock Out */}
                         <td className="p-3.5 whitespace-nowrap font-mono">
                           <div>{formatTime(rec.clock_out_at)}</div>
                           {rec.overtime_minutes && rec.overtime_minutes > 0 ? (
@@ -1058,7 +1010,6 @@ export default function AdminPage() {
                           ) : null}
                         </td>
 
-                        {/* Handover Notes & Cash */}
                         <td className="p-3.5 max-w-xs text-[11px] text-[#736E66]">
                           {rec.handover_notes ? (
                             <div>
@@ -1094,20 +1045,20 @@ export default function AdminPage() {
           </div>
         )}
 
-        {/* TAB 2: TEAM / STAFF DIRECTORY */}
+        {/* TAB 2: TEAM DIRECTORY */}
         {activeTab === 'team' && (
           <div className="bg-white border border-[#E8E2D5] rounded-2xl overflow-hidden shadow-xs">
             <div className="p-4 border-b border-[#E8E2D5] bg-[#FAF8F5]/60 flex justify-between items-center">
               <div>
                 <span className="text-xs uppercase tracking-wider font-semibold text-[#191C1A]">
-                  Team Directory &amp; Profile Scoping
+                  Team Directory &amp; Cabang Staf
                 </span>
                 <p className="text-[11px] text-[#8A857C]">
-                  Manage staff roles, employee IDs, and assigned store branches directly.
+                  Atur cabang penugasan masing-masing staf untuk sinkronisasi shift otomatis.
                 </p>
               </div>
               <span className="text-[11px] font-mono text-[#8A857C]">
-                {filteredStaffList.length} Team Members
+                {filteredStaffList.length} Anggota Tim
               </span>
             </div>
 
@@ -1115,18 +1066,18 @@ export default function AdminPage() {
               <table className="w-full text-left text-xs text-[#191C1A]">
                 <thead className="bg-[#FAF8F5] text-[10px] uppercase tracking-wider text-[#8A857C] border-b border-[#E8E2D5]">
                   <tr>
-                    <th className="p-3.5">Staff Member</th>
-                    <th className="p-3.5">Employee Code</th>
-                    <th className="p-3.5">Assigned Store</th>
-                    <th className="p-3.5">System Role</th>
-                    <th className="p-3.5 text-right">Action</th>
+                    <th className="p-3.5">Staff</th>
+                    <th className="p-3.5">Kode Staf</th>
+                    <th className="p-3.5">Cabang Toko</th>
+                    <th className="p-3.5">Role</th>
+                    <th className="p-3.5 text-right">Aksi</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[#E8E2D5]">
                   {filteredStaffList.length === 0 ? (
                     <tr>
                       <td colSpan={5} className="p-8 text-center text-xs text-[#8A857C]">
-                        No team members registered for this store.
+                        Belum ada staf di filter ini.
                       </td>
                     </tr>
                   ) : (
@@ -1142,26 +1093,24 @@ export default function AdminPage() {
                             </div>
                           </td>
 
-                          {/* Employee Code */}
                           <td className="p-3.5">
                             {isEditing ? (
                               <input
                                 type="text"
                                 value={editEmployeeCode}
                                 onChange={(e) => setEditEmployeeCode(e.target.value)}
-                                placeholder="e.g. TW-BM-01"
-                                className="p-1.5 text-xs border border-[#E8E2D5] bg-white font-mono w-32 uppercase rounded"
+                                placeholder="TW-BM-01"
+                                className="p-1.5 text-xs border border-[#E8E2D5] bg-white font-mono w-28 uppercase rounded"
                               />
                             ) : (
                               <span className="font-mono text-xs text-[#191C1A]">
                                 {member.employee_code || (
-                                  <span className="text-[#8A857C] italic">Not set</span>
+                                  <span className="text-[#8A857C] italic">Belum ada</span>
                                 )}
                               </span>
                             )}
                           </td>
 
-                          {/* Assigned Store */}
                           <td className="p-3.5">
                             {isEditing ? (
                               <select
@@ -1169,7 +1118,7 @@ export default function AdminPage() {
                                 onChange={(e) => setEditStoreId(e.target.value)}
                                 className="p-1.5 text-xs border border-[#E8E2D5] bg-white text-[#191C1A] rounded"
                               >
-                                <option value="">Global / Office</option>
+                                <option value="">Office / Headquarter</option>
                                 {stores.map((s) => (
                                   <option key={s.id} value={s.id}>
                                     {s.name}
@@ -1183,7 +1132,6 @@ export default function AdminPage() {
                             )}
                           </td>
 
-                          {/* Role */}
                           <td className="p-3.5">
                             {isEditing ? (
                               <select
@@ -1209,7 +1157,6 @@ export default function AdminPage() {
                             )}
                           </td>
 
-                          {/* Actions */}
                           <td className="p-3.5 text-right whitespace-nowrap">
                             {isEditing ? (
                               <div className="flex items-center justify-end space-x-2">
@@ -1251,7 +1198,7 @@ export default function AdminPage() {
           <div className="bg-white border border-[#E8E2D5] rounded-2xl divide-y divide-[#E8E2D5] overflow-hidden shadow-xs">
             {filteredLeave.length === 0 ? (
               <p className="p-8 text-center text-xs text-[#8A857C]">
-                No leave requests for this store.
+                Belum ada pengajuan cuti.
               </p>
             ) : (
               filteredLeave.map((req) => (
@@ -1281,7 +1228,7 @@ export default function AdminPage() {
                     </div>
                     <p className="text-xs text-[#736E66] mt-1">{req.reason}</p>
                     <span className="text-[11px] font-mono text-[#8A857C]">
-                      Dates: {req.start_date} to {req.end_date}
+                      Tanggal: {req.start_date} s/d {req.end_date}
                     </span>
                   </div>
 
@@ -1291,13 +1238,13 @@ export default function AdminPage() {
                         onClick={() => handleLeaveDecision(req.id, 'approved')}
                         className="px-3.5 py-1.5 bg-[#2E473B] text-white text-[11px] uppercase tracking-wider hover:bg-[#23382D] rounded-full transition"
                       >
-                        Approve
+                        Setujui
                       </button>
                       <button
                         onClick={() => handleLeaveDecision(req.id, 'rejected')}
                         className="px-3.5 py-1.5 bg-white border border-[#E8E2D5] text-rose-700 text-[11px] uppercase tracking-wider hover:bg-rose-50 rounded-full transition"
                       >
-                        Reject
+                        Tolak
                       </button>
                     </div>
                   )}
@@ -1307,23 +1254,23 @@ export default function AdminPage() {
           </div>
         )}
 
-        {/* TAB 4: ROSTER / SHIFT PLANNER */}
+        {/* TAB 4: ROSTER SHIFT PLANNER */}
         {activeTab === 'schedule' && (
           <div className="space-y-4">
             <div className="flex justify-between items-center bg-white border border-[#E8E2D5] p-4 rounded-2xl shadow-xs">
               <div>
                 <span className="text-xs uppercase tracking-wider font-semibold text-[#191C1A]">
-                  Store Roster Schedule
+                  Store Roster &amp; Shift Planner
                 </span>
                 <p className="text-[11px] text-[#8A857C]">
-                  Office: Mon-Fri (09:00-17:00), Sat (08:00-13:00) | Stores: Morning (09:40-18:00), Afternoon (11:40-20:00)
+                  Jadwal yang diset di sini langsung otomatis sinkron ke dashboard staf dan perhitungan keterlambatan.
                 </p>
               </div>
               <button
                 onClick={openRosterForm}
                 className="px-4 py-2 bg-[#191C1A] text-white text-xs uppercase tracking-wider hover:bg-[#C26D53] rounded-full transition"
               >
-                {showRosterForm ? 'Close' : '+ Add Shift'}
+                {showRosterForm ? 'Tutup' : '+ Atur Shift Roster'}
               </button>
             </div>
 
@@ -1332,44 +1279,82 @@ export default function AdminPage() {
                 onSubmit={handleCreateRoster}
                 className="bg-white border border-[#E8E2D5] p-5 rounded-2xl space-y-4 shadow-sm"
               >
-                <div className="flex flex-wrap items-center gap-2 pb-2 border-b border-[#E8E2D5]">
-                  <span className="text-[10px] uppercase tracking-wider text-[#8A857C] font-mono mr-1">
-                    Presets:
+                {/* 1-Click Shift Presets by Location */}
+                <div className="space-y-1.5 pb-3 border-b border-[#E8E2D5]">
+                  <span className="text-[10px] uppercase tracking-wider text-[#8A857C] font-mono block">
+                    Pilihan Cepat Shift Berdasarkan Cabang:
                   </span>
-                  <button
-                    type="button"
-                    onClick={() => applyShiftPreset('office_weekday')}
-                    className="px-2.5 py-1 text-[10px] border border-[#E8E2D5] bg-[#FAF8F5] hover:bg-[#191C1A] hover:text-white rounded-md transition font-mono"
-                  >
-                    Office Mon-Fri (09:00 - 17:00)
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => applyShiftPreset('office_saturday')}
-                    className="px-2.5 py-1 text-[10px] border border-[#E8E2D5] bg-[#FAF8F5] hover:bg-[#191C1A] hover:text-white rounded-md transition font-mono"
-                  >
-                    Office Sat (08:00 - 13:00)
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => applyShiftPreset('morning')}
-                    className="px-2.5 py-1 text-[10px] border border-[#E8E2D5] bg-[#FAF8F5] hover:bg-[#191C1A] hover:text-white rounded-md transition font-mono"
-                  >
-                    Store Morning (09:40 - 18:00)
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => applyShiftPreset('afternoon')}
-                    className="px-2.5 py-1 text-[10px] border border-[#E8E2D5] bg-[#FAF8F5] hover:bg-[#191C1A] hover:text-white rounded-md transition font-mono"
-                  >
-                    Store Afternoon (11:40 - 20:00)
-                  </button>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {/* Office */}
+                    <button
+                      type="button"
+                      onClick={() => applyShiftPreset('office_weekday')}
+                      className="px-2.5 py-1 text-[10px] border border-[#E8E2D5] bg-[#FAF8F5] hover:bg-[#191C1A] hover:text-white rounded-md transition font-mono"
+                    >
+                      Office Senin-Jumat (09:00 - 17:00)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => applyShiftPreset('office_sat')}
+                      className="px-2.5 py-1 text-[10px] border border-[#E8E2D5] bg-[#FAF8F5] hover:bg-[#191C1A] hover:text-white rounded-md transition font-mono"
+                    >
+                      Office Sabtu (08:00 - 13:00)
+                    </button>
+
+                    {/* Batu Mejan */}
+                    <button
+                      type="button"
+                      onClick={() => applyShiftPreset('bm_pagi')}
+                      className="px-2.5 py-1 text-[10px] border border-[#E8E2D5] bg-[#FAF8F5] hover:bg-[#191C1A] hover:text-white rounded-md transition font-mono"
+                    >
+                      Batu Mejan Pagi (09:40 - 18:00)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => applyShiftPreset('bm_siang')}
+                      className="px-2.5 py-1 text-[10px] border border-[#E8E2D5] bg-[#FAF8F5] hover:bg-[#191C1A] hover:text-white rounded-md transition font-mono"
+                    >
+                      Batu Mejan Siang (11:40 - 20:00)
+                    </button>
+
+                    {/* Nelayan */}
+                    <button
+                      type="button"
+                      onClick={() => applyShiftPreset('nelayan_pagi')}
+                      className="px-2.5 py-1 text-[10px] border border-[#E8E2D5] bg-[#FAF8F5] hover:bg-[#191C1A] hover:text-white rounded-md transition font-mono"
+                    >
+                      Nelayan Pagi (09:45 - 18:00)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => applyShiftPreset('nelayan_siang')}
+                      className="px-2.5 py-1 text-[10px] border border-[#E8E2D5] bg-[#FAF8F5] hover:bg-[#191C1A] hover:text-white rounded-md transition font-mono"
+                    >
+                      Nelayan Siang (12:45 - 21:00)
+                    </button>
+
+                    {/* Bingin */}
+                    <button
+                      type="button"
+                      onClick={() => applyShiftPreset('bingin_pagi')}
+                      className="px-2.5 py-1 text-[10px] border border-[#E8E2D5] bg-[#FAF8F5] hover:bg-[#191C1A] hover:text-white rounded-md transition font-mono"
+                    >
+                      Bingin Pagi (08:45 - 17:00)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => applyShiftPreset('bingin_siang')}
+                      className="px-2.5 py-1 text-[10px] border border-[#E8E2D5] bg-[#FAF8F5] hover:bg-[#191C1A] hover:text-white rounded-md transition font-mono"
+                    >
+                      Bingin Siang (11:45 - 20:00)
+                    </button>
+                  </div>
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
                   <div>
                     <label className="text-[10px] uppercase text-[#8A857C] font-mono block mb-1">
-                      Select Staff
+                      Pilih Staf
                     </label>
                     <select
                       value={newRosterUser}
@@ -1386,7 +1371,7 @@ export default function AdminPage() {
 
                   <div>
                     <label className="text-[10px] uppercase text-[#8A857C] font-mono block mb-1">
-                      Shift Date
+                      Tanggal Shift
                     </label>
                     <input
                       type="date"
@@ -1402,7 +1387,7 @@ export default function AdminPage() {
 
                   <div>
                     <label className="text-[10px] uppercase text-[#8A857C] font-mono block mb-1">
-                      Start Time
+                      Jam Mulai
                     </label>
                     <input
                       type="time"
@@ -1415,7 +1400,7 @@ export default function AdminPage() {
 
                   <div>
                     <label className="text-[10px] uppercase text-[#8A857C] font-mono block mb-1">
-                      End Time
+                      Jam Selesai
                     </label>
                     <input
                       type="time"
@@ -1436,14 +1421,14 @@ export default function AdminPage() {
                         onChange={(e) => setNewRosterIsOff(e.target.checked)}
                         className="accent-[#C26D53]"
                       />
-                      <span>Mark as Day Off / Rest</span>
+                      <span>Tandai Libur (Day Off)</span>
                     </label>
 
                     <input
                       type="text"
                       value={newRosterNotes}
                       onChange={(e) => setNewRosterNotes(e.target.value)}
-                      placeholder="Notes (e.g. Morning Shift)"
+                      placeholder="Keterangan Shift"
                       className="flex-1 p-2 text-xs border border-[#E8E2D5] bg-[#FAF8F5] rounded"
                     />
                   </div>
@@ -1452,7 +1437,7 @@ export default function AdminPage() {
                     type="submit"
                     className="px-5 py-2 bg-[#191C1A] text-white text-xs uppercase tracking-widest whitespace-nowrap hover:bg-[#C26D53] rounded-full transition"
                   >
-                    Save Shift
+                    Simpan Roster
                   </button>
                 </div>
               </form>
@@ -1460,7 +1445,7 @@ export default function AdminPage() {
 
             <div className="bg-white border border-[#E8E2D5] rounded-2xl divide-y divide-[#E8E2D5] overflow-hidden shadow-xs">
               {filteredSchedules.length === 0 ? (
-                <p className="p-8 text-center text-xs text-[#8A857C]">No shifts scheduled.</p>
+                <p className="p-8 text-center text-xs text-[#8A857C]">Belum ada jadwal roster.</p>
               ) : (
                 filteredSchedules.map((item) => (
                   <div
@@ -1490,7 +1475,7 @@ export default function AdminPage() {
                         onClick={() => handleDeleteRoster(item.id)}
                         className="text-rose-600 hover:text-rose-900 text-xs px-2.5 py-1 border border-rose-200 rounded-md"
                       >
-                        Delete
+                        Hapus
                       </button>
                     </div>
                   </div>
@@ -1500,7 +1485,7 @@ export default function AdminPage() {
           </div>
         )}
 
-        {/* TAB 5: STORE TASKS */}
+        {/* TAB 5: TASKS */}
         {activeTab === 'tasks' && (
           <div className="space-y-4">
             <div className="flex justify-between items-center bg-white border border-[#E8E2D5] p-4 rounded-2xl shadow-xs">
@@ -1509,14 +1494,14 @@ export default function AdminPage() {
                   Store Operational Checklist
                 </span>
                 <p className="text-[11px] text-[#8A857C]">
-                  Create rituals and daily procedures for boutique store staff.
+                  Buat ritual dan tugas harian toko.
                 </p>
               </div>
               <button
                 onClick={() => setShowTaskForm(!showTaskForm)}
                 className="px-4 py-2 bg-[#191C1A] text-white text-xs uppercase tracking-wider hover:bg-[#C26D53] rounded-full transition"
               >
-                {showTaskForm ? 'Close' : '+ New Task'}
+                {showTaskForm ? 'Tutup' : '+ New Task'}
               </button>
             </div>
 
@@ -1527,7 +1512,7 @@ export default function AdminPage() {
               >
                 <input
                   type="text"
-                  placeholder="Task title (e.g. Inspect Fitting Rooms & Steam Garments)"
+                  placeholder="Judul task..."
                   value={newTaskTitle}
                   onChange={(e) => setNewTaskTitle(e.target.value)}
                   required
@@ -1535,7 +1520,7 @@ export default function AdminPage() {
                 />
                 <input
                   type="text"
-                  placeholder="Task description..."
+                  placeholder="Deskripsi task..."
                   value={newTaskDesc}
                   onChange={(e) => setNewTaskDesc(e.target.value)}
                   className="w-full p-2 text-xs border border-[#E8E2D5] bg-[#FAF8F5] rounded"
@@ -1554,7 +1539,7 @@ export default function AdminPage() {
                     type="submit"
                     className="px-5 py-2 bg-[#191C1A] text-white text-xs uppercase tracking-widest hover:bg-[#C26D53] rounded-full transition"
                   >
-                    Create Task
+                    Buat Task
                   </button>
                 </div>
               </form>
@@ -1562,9 +1547,7 @@ export default function AdminPage() {
 
             <div className="bg-white border border-[#E8E2D5] rounded-2xl divide-y divide-[#E8E2D5] overflow-hidden shadow-xs">
               {filteredTasks.length === 0 ? (
-                <p className="p-8 text-center text-xs text-[#8A857C]">
-                  No tasks logged for this store.
-                </p>
+                <p className="p-8 text-center text-xs text-[#8A857C]">Belum ada task.</p>
               ) : (
                 filteredTasks.map((t) => (
                   <div
@@ -1601,7 +1584,7 @@ export default function AdminPage() {
                         onClick={() => handleDeleteTask(t.id)}
                         className="text-xs text-rose-600 hover:text-rose-900 px-2.5 py-1 border border-rose-200 rounded-md"
                       >
-                        Delete
+                        Hapus
                       </button>
                     </div>
                   </div>
@@ -1611,7 +1594,7 @@ export default function AdminPage() {
           </div>
         )}
 
-        {/* TAB 6: BROADCAST NEWS */}
+        {/* TAB 6: NEWS */}
         {activeTab === 'news' && (
           <div className="space-y-4">
             <div className="flex justify-between items-center bg-white border border-[#E8E2D5] p-4 rounded-2xl shadow-xs">
@@ -1620,14 +1603,14 @@ export default function AdminPage() {
                   Store Broadcast News
                 </span>
                 <p className="text-[11px] text-[#8A857C]">
-                  Publish announcements for staff at selected store.
+                  Publikasikan pengumuman ke staf toko.
                 </p>
               </div>
               <button
                 onClick={() => setShowNewsForm(!showNewsForm)}
                 className="px-4 py-2 bg-[#191C1A] text-white text-xs uppercase tracking-wider hover:bg-[#C26D53] rounded-full transition"
               >
-                {showNewsForm ? 'Close' : '+ New Broadcast'}
+                {showNewsForm ? 'Tutup' : '+ New Broadcast'}
               </button>
             </div>
 
@@ -1638,7 +1621,7 @@ export default function AdminPage() {
               >
                 <input
                   type="text"
-                  placeholder="Broadcast Title"
+                  placeholder="Judul Pengumuman"
                   value={newNewsTitle}
                   onChange={(e) => setNewNewsTitle(e.target.value)}
                   required
@@ -1646,7 +1629,7 @@ export default function AdminPage() {
                 />
                 <textarea
                   rows={3}
-                  placeholder="Broadcast content details..."
+                  placeholder="Isi pengumuman..."
                   value={newNewsContent}
                   onChange={(e) => setNewNewsContent(e.target.value)}
                   required
@@ -1658,14 +1641,14 @@ export default function AdminPage() {
                     onChange={(e) => setNewNewsPriority(e.target.value as 'normal' | 'urgent')}
                     className="p-2 text-xs border border-[#E8E2D5] bg-[#FAF8F5] rounded"
                   >
-                    <option value="normal">Standard Priority</option>
-                    <option value="urgent">Urgent Priority</option>
+                    <option value="normal">Standard</option>
+                    <option value="urgent">Urgent</option>
                   </select>
                   <button
                     type="submit"
                     className="px-5 py-2 bg-[#191C1A] text-white text-xs uppercase tracking-widest hover:bg-[#C26D53] rounded-full transition"
                   >
-                    Publish Broadcast
+                    Publikasikan
                   </button>
                 </div>
               </form>
@@ -1674,7 +1657,7 @@ export default function AdminPage() {
             <div className="space-y-3">
               {filteredNews.length === 0 ? (
                 <div className="bg-white border border-[#E8E2D5] rounded-2xl p-8 text-center text-xs text-[#8A857C]">
-                  No broadcasts found for this store.
+                  Belum ada broadcast untuk toko ini.
                 </div>
               ) : (
                 filteredNews.map((n) => (
@@ -1690,7 +1673,7 @@ export default function AdminPage() {
                         onClick={() => handleDeleteNews(n.id)}
                         className="text-xs text-rose-600 hover:text-rose-900 border border-rose-200 px-2 py-0.5 rounded"
                       >
-                        Delete
+                        Hapus
                       </button>
                     </div>
                     <p className="text-xs text-[#736E66]">{n.content}</p>
