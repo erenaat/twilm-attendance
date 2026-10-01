@@ -119,6 +119,18 @@ export default function AdminPage() {
     'attendance' | 'leave' | 'schedule' | 'tasks' | 'news' | 'team'
   >('attendance')
 
+  // Date Range Filter States (Default to Current Month)
+  const [filterStartDate, setFilterStartDate] = useState<string>(() => {
+    const now = new Date()
+    const firstDay = new Date(now.getFullYear(), now.getMonth(), 1)
+    return firstDay.toISOString().split('T')[0]
+  })
+  const [filterEndDate, setFilterEndDate] = useState<string>(() => {
+    const now = new Date()
+    const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0)
+    return lastDay.toISOString().split('T')[0]
+  })
+
   // Form Modals / Expanders
   const [showRosterForm, setShowRosterForm] = useState(false)
   const [showTaskForm, setShowTaskForm] = useState(false)
@@ -154,10 +166,34 @@ export default function AdminPage() {
     return Array.isArray(s) ? s[0]?.name || '' : s.name || ''
   }
 
+  // Set month filter shortcuts
+  const selectMonthShortcut = (type: 'this_month' | 'last_month' | 'september_2026') => {
+    if (type === 'this_month') {
+      const now = new Date()
+      const first = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0]
+      const last = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split('T')[0]
+      setFilterStartDate(first)
+      setFilterEndDate(last)
+    } else if (type === 'last_month') {
+      const now = new Date()
+      const first = new Date(now.getFullYear(), now.getMonth() - 1, 1).toISOString().split('T')[0]
+      const last = new Date(now.getFullYear(), now.getMonth(), 0).toISOString().split('T')[0]
+      setFilterStartDate(first)
+      setFilterEndDate(last)
+    } else if (type === 'september_2026') {
+      setFilterStartDate('2026-09-01')
+      setFilterEndDate('2026-09-30')
+    }
+  }
+
   const fetchAllAdminData = useCallback(async () => {
+    setLoading(true)
+
+    // 1. Fetch Stores
     const { data: storeData } = await supabase.from('stores').select('id, name').order('name')
     if (storeData) setStores(storeData)
 
+    // 2. Fetch Profiles
     const { data: staffData } = await supabase
       .from('profiles')
       .select('id, full_name, email, role, employee_code, store_id, stores(id, name)')
@@ -167,32 +203,51 @@ export default function AdminPage() {
       setNewRosterUser((prev) => prev || (staffData.length > 0 ? staffData[0].id : ''))
     }
 
-    const { data: attData } = await supabase
+    // 3. Fetch Full Attendance based on chosen Date Range (No 100-row limit!)
+    let query = supabase
       .from('attendance')
       .select('*, profiles(id, full_name, email, store_id), stores(id, name)')
       .order('work_date', { ascending: false })
-      .limit(100)
-    if (attData) setRecords(attData as unknown as AttendanceRecord[])
 
+    if (filterStartDate) {
+      query = query.gte('work_date', filterStartDate)
+    }
+    if (filterEndDate) {
+      query = query.lte('work_date', filterEndDate)
+    }
+
+    // Set large limit to handle full company month records
+    const { data: attData, error: attErr } = await query.limit(2000)
+
+    if (attErr) {
+      console.error('Error fetching attendance logs:', attErr.message)
+    } else if (attData) {
+      setRecords(attData as unknown as AttendanceRecord[])
+    }
+
+    // 4. Fetch Leave Requests
     const { data: lData } = await supabase
       .from('leave_requests')
       .select('*, profiles(id, full_name, email, store_id)')
       .order('created_at', { ascending: false })
     if (lData) setLeaveRequests(lData as unknown as LeaveRequestItem[])
 
+    // 5. Fetch Schedules
     const { data: schData } = await supabase
       .from('schedules')
       .select('*, profiles(id, full_name, email, store_id), stores(id, name)')
       .order('shift_date', { ascending: false })
-      .limit(60)
+      .limit(100)
     if (schData) setSchedules(schData as unknown as ScheduleItem[])
 
+    // 6. Fetch Tasks
     const { data: tskData } = await supabase
       .from('tasks')
       .select('*, stores(id, name)')
       .order('created_at', { ascending: false })
     if (tskData) setTasks(tskData as unknown as TaskItem[])
 
+    // 7. Fetch Announcements
     const { data: newsData } = await supabase
       .from('announcements')
       .select('*, stores(id, name)')
@@ -200,7 +255,7 @@ export default function AdminPage() {
     if (newsData) setAnnouncements(newsData as unknown as AnnouncementItem[])
 
     setLoading(false)
-  }, [])
+  }, [filterStartDate, filterEndDate])
 
   useEffect(() => {
     let isMounted = true
@@ -270,7 +325,6 @@ export default function AdminPage() {
         setNewRosterNotes('Office Mon-Fri (09:00 - 17:00)')
       }
     } else {
-      // Boutiques (Batu Mejan, Nelayan, Bingin) default to Morning
       setNewRosterStart('09:40')
       setNewRosterEnd('18:00')
       setNewRosterNotes('Morning Shift (09:40 - 18:00)')
@@ -544,10 +598,10 @@ export default function AdminPage() {
       .replace(/'/g, '&apos;')
   }
 
-  // Export File Excel (.xls)
+  // Export File Excel (.xls) with Complete Date Range Scope
   const exportToExcelSheet = () => {
     if (filteredAttendance.length === 0) {
-      alert('Tidak ada data absensi untuk diekspor.')
+      alert('Tidak ada data absensi pada periode tanggal yang dipilih untuk diekspor.')
       return
     }
 
@@ -555,8 +609,6 @@ export default function AdminPage() {
       selectedStoreFilter === 'all'
         ? 'All Stores & Office'
         : stores.find((s) => s.id === selectedStoreFilter)?.name || 'Store'
-
-    const todayStr = new Date().toISOString().split('T')[0]
 
     const columns = [
       { header: 'Date', width: 90 },
@@ -704,7 +756,7 @@ export default function AdminPage() {
     <Cell ss:StyleID="TitleReport"><Data ss:Type="String">TWILM — STORE ATTENDANCE &amp; PAYROLL LOGBOOK</Data></Cell>
    </Row>
    <Row ss:Height="18">
-    <Cell ss:StyleID="SubTitle"><Data ss:Type="String">Branch Scope: ${escapeXml(branchName)} | Exported on: ${escapeXml(todayStr)} | Records: ${filteredAttendance.length}</Data></Cell>
+    <Cell ss:StyleID="SubTitle"><Data ss:Type="String">Branch: ${escapeXml(branchName)} | Period: ${escapeXml(filterStartDate)} to ${escapeXml(filterEndDate)} | Total Records: ${filteredAttendance.length}</Data></Cell>
    </Row>
    <Row ss:Height="10"/>
    <Row ss:Height="26">
@@ -732,7 +784,7 @@ export default function AdminPage() {
         ? 'ALL_STORES'
         : stores.find((s) => s.id === selectedStoreFilter)?.name.replace(/\s+/g, '_') || 'STORE'
 
-    link.setAttribute('download', `TWILM_Attendance_${fileBranch}_${todayStr}.xls`)
+    link.setAttribute('download', `TWILM_Attendance_${fileBranch}_${filterStartDate}_to_${filterEndDate}.xls`)
     document.body.appendChild(link)
     link.click()
     document.body.removeChild(link)
@@ -780,9 +832,10 @@ export default function AdminPage() {
 
             <button
               onClick={exportToExcelSheet}
-              className="px-3.5 py-1.5 bg-white border border-[#E8E2D5] text-[11px] uppercase tracking-wider hover:bg-neutral-50 rounded-full transition shadow-xs"
+              className="px-4 py-1.5 bg-[#2E473B] text-white text-[11px] uppercase tracking-wider hover:bg-[#23382D] rounded-full transition shadow-xs flex items-center space-x-1.5"
             >
-              Export Excel Sheet
+              <span>↓</span>
+              <span>Export Full Excel</span>
             </button>
             <button
               onClick={fetchAllAdminData}
@@ -790,6 +843,53 @@ export default function AdminPage() {
             >
               Refresh
             </button>
+          </div>
+        </div>
+
+        {/* Date Range Selector Strip for Payroll & Monthly Attendance */}
+        <div className="bg-white border border-[#E8E2D5] p-3.5 sm:p-4 rounded-2xl flex flex-col md:flex-row md:items-center justify-between gap-3 shadow-xs">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-[10px] uppercase tracking-wider text-[#8A857C] font-mono">
+              Period Preset:
+            </span>
+            <button
+              type="button"
+              onClick={() => selectMonthShortcut('september_2026')}
+              className="px-3 py-1 text-[11px] font-mono rounded-full border border-[#E8E2D5] bg-[#FAF8F5] hover:bg-[#191C1A] hover:text-white transition"
+            >
+              September 2026 (Full Month)
+            </button>
+            <button
+              type="button"
+              onClick={() => selectMonthShortcut('this_month')}
+              className="px-3 py-1 text-[11px] font-mono rounded-full border border-[#E8E2D5] bg-[#FAF8F5] hover:bg-[#191C1A] hover:text-white transition"
+            >
+              Current Month
+            </button>
+            <button
+              type="button"
+              onClick={() => selectMonthShortcut('last_month')}
+              className="px-3 py-1 text-[11px] font-mono rounded-full border border-[#E8E2D5] bg-[#FAF8F5] hover:bg-[#191C1A] hover:text-white transition"
+            >
+              Previous Month
+            </button>
+          </div>
+
+          <div className="flex items-center space-x-2 text-xs">
+            <span className="text-[10px] uppercase text-[#8A857C] font-mono">From:</span>
+            <input
+              type="date"
+              value={filterStartDate}
+              onChange={(e) => setFilterStartDate(e.target.value)}
+              className="p-1.5 border border-[#E8E2D5] rounded-lg font-mono text-[11px] bg-[#FAF8F5]"
+            />
+            <span className="text-[10px] uppercase text-[#8A857C] font-mono">To:</span>
+            <input
+              type="date"
+              value={filterEndDate}
+              onChange={(e) => setFilterEndDate(e.target.value)}
+              className="p-1.5 border border-[#E8E2D5] rounded-lg font-mono text-[11px] bg-[#FAF8F5]"
+            />
           </div>
         </div>
 
@@ -860,6 +960,18 @@ export default function AdminPage() {
         {/* TAB 1: ATTENDANCE */}
         {activeTab === 'attendance' && (
           <div className="bg-white border border-[#E8E2D5] rounded-2xl overflow-hidden shadow-xs">
+            <div className="p-3.5 bg-[#FAF8F5] border-b border-[#E8E2D5] flex justify-between items-center text-xs">
+              <span className="font-mono text-[#8A857C]">
+                Showing {filteredAttendance.length} records between {filterStartDate} and {filterEndDate}
+              </span>
+              <button
+                onClick={exportToExcelSheet}
+                className="text-[11px] font-mono text-[#2E473B] font-medium hover:underline"
+              >
+                Download this table as Excel →
+              </button>
+            </div>
+
             <div className="overflow-x-auto">
               <table className="w-full text-left text-xs text-[#191C1A]">
                 <thead className="bg-[#FAF8F5] text-[10px] uppercase tracking-wider text-[#8A857C] border-b border-[#E8E2D5]">
@@ -878,13 +990,13 @@ export default function AdminPage() {
                   {loading ? (
                     <tr>
                       <td colSpan={8} className="p-8 text-center text-xs text-[#8A857C]">
-                        Loading logs...
+                        Loading logs for selected period...
                       </td>
                     </tr>
                   ) : filteredAttendance.length === 0 ? (
                     <tr>
                       <td colSpan={8} className="p-8 text-center text-xs text-[#8A857C]">
-                        No logs for this store.
+                        No logs found between {filterStartDate} and {filterEndDate}.
                       </td>
                     </tr>
                   ) : (
@@ -1220,7 +1332,6 @@ export default function AdminPage() {
                 onSubmit={handleCreateRoster}
                 className="bg-white border border-[#E8E2D5] p-5 rounded-2xl space-y-4 shadow-sm"
               >
-                {/* 1-Click Shift Presets with Updated Store Logic */}
                 <div className="flex flex-wrap items-center gap-2 pb-2 border-b border-[#E8E2D5]">
                   <span className="text-[10px] uppercase tracking-wider text-[#8A857C] font-mono mr-1">
                     Presets:
